@@ -1,0 +1,2238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Transformer 攻防透视：在浏览器里逐步看一条提示注入如何穿过 LLM 的分词、嵌入、注意力、前馈与采样阶段，以及三道防御如何拦截。交互范式参考 poloclub/transformer-explainer，数据为本地规则化演示样例。">
+<meta name="theme-color" content="#1f4fd8">
+<title>Transformer 攻防透视 · AI 安全学习实验室</title>
+<style>
+/* ========== 视觉基线：与站点 assets/css/style.css 同源的 light token ========== */
+:root {
+  --bg: #f4f7fc;
+  --surface: #ffffff;
+  --surface-2: #f8faff;
+  --surface-3: #eef3fb;
+  --ink: #14213c;
+  --ink-2: #4d5c78;
+  --ink-3: #8493ad;
+  --line: #e1e8f3;
+  --line-2: #cfd9ea;
+  --brand: #1f4fd8;
+  --brand-2: #3f6ff0;
+  --brand-soft: #e9f0ff;
+  --brand-ink: #163b9e;
+  --danger: #dc4c43;
+  --danger-soft: #fdecea;
+  --warn: #df8a21;
+  --warn-soft: #fff3df;
+  --ok: #12886a;
+  --ok-soft: #e2f6ef;
+  --shadow-s: 0 1px 2px rgba(20, 33, 60, .05), 0 2px 8px rgba(20, 33, 60, .04);
+  --shadow-m: 0 4px 12px rgba(20, 33, 60, .07), 0 18px 46px rgba(20, 33, 60, .06);
+  --radius: 14px;
+  --radius-s: 10px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+a { color: var(--brand); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+h1, h2, h3, h4 { line-height: 1.35; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+p { margin: 0 0 12px; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+.svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.muted { color: var(--ink-3); }
+.small { font-size: 13px; }
+.tiny { font-size: 12px; }
+.mono { font-family: var(--mono); font-size: .92em; }
+.notice { padding: 12px 16px; border-radius: var(--radius-s); background: var(--brand-soft); color: var(--brand-ink); border: 1px solid var(--line); font-size: 13px; }
+
+/* ========== 顶栏 ========== */
+.topbar {
+  position: sticky; top: 0; z-index: 40; height: 62px;
+  display: flex; align-items: center; gap: 14px; padding: 0 20px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 11px; color: var(--ink); flex: none; }
+.brand:hover { text-decoration: none; }
+.brand-mark { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: #fff; background: linear-gradient(145deg, #1f4fd8, #3f8bf0); box-shadow: 0 6px 16px rgba(31, 79, 216, .28); }
+.brand-mark .ic { width: 21px; height: 21px; stroke-width: 2; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.25; }
+.brand-text b { font-size: 15px; letter-spacing: .01em; }
+.brand-text small { font-size: 11px; color: var(--ink-3); letter-spacing: .02em; }
+.top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: none; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 6px; font-size: 11.5px; font-weight: 600; background: var(--surface-3); color: var(--ink-2); white-space: nowrap; }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 16px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font-size: 13.5px; font-weight: 600; transition: .18s ease; }
+.btn:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); text-decoration: none; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 4px 12px rgba(31, 79, 216, .2); }
+.btn.primary:hover { background: var(--brand-2); color: #fff; }
+.btn.small { padding: 6px 11px; font-size: 12px; border-radius: 8px; }
+.btn .ic { width: 16px; height: 16px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ========== 页面骨架 ========== */
+.page { max-width: 1180px; margin: 0 auto; padding: 30px 34px 80px; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--brand); text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.eyebrow::before { content: ""; width: 18px; height: 2px; border-radius: 2px; background: var(--brand); }
+.page-head { margin-bottom: 24px; }
+.page-head h1 { font-size: clamp(25px, 3.2vw, 36px); margin-bottom: 10px; }
+.lead { color: var(--ink-2); font-size: 15px; max-width: 860px; line-height: 1.85; }
+.lead b { color: var(--ink); }
+.ref-line { margin-top: 12px; font-size: 12.5px; color: var(--ink-3); }
+.section { margin-top: 30px; }
+.section-title { display: flex; align-items: center; gap: 10px; font-size: 18px; margin-bottom: 14px; }
+.section-title .sec-no { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--brand-soft); color: var(--brand); font: 700 12px var(--mono); flex: none; }
+.section-title .sec-tip { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--ink-3); }
+
+/* ========== 演示卡片（与站点 demo-card 同构） ========== */
+.demo-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-s); overflow: clip; }
+.demo-head { display: flex; align-items: center; gap: 10px; padding: 13px 18px; background: linear-gradient(100deg, var(--brand-soft), var(--surface-2)); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.demo-head .ic { color: var(--brand); width: 18px; height: 18px; }
+.demo-head h2 { font-size: 14.5px; font-weight: 700; margin: 0; }
+.demo-head .demo-type { margin-left: auto; font: 11px var(--mono); color: var(--ink-3); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; }
+.demo-body { padding: 18px; }
+.demo-foot { padding: 10px 18px; border-top: 1px solid var(--line); background: var(--surface-2); font-size: 11.5px; color: var(--ink-3); display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; line-height: 1.7; }
+.demo-foot .ic { width: 14px; height: 14px; color: var(--brand); margin-top: 3px; }
+
+/* ========== 主区布局 ========== */
+.labx-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.labx-controls { display: grid; gap: 14px; align-content: start; }
+.control-group { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2); }
+.control-group > label, .control-label { display: block; font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 8px; letter-spacing: .01em; }
+.control-tip { font-size: 11.5px; color: var(--ink-3); line-height: 1.55; margin-top: 6px; }
+.seg { display: flex; flex-wrap: wrap; gap: 5px; }
+.seg button { padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); transition: .16s ease; }
+.seg button:hover { border-color: var(--brand); }
+.seg button.active { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+.switch-list { display: grid; gap: 7px; }
+.switch { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; position: relative; }
+.switch:hover { border-color: var(--brand); }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .track { width: 30px; height: 17px; border-radius: 99px; background: var(--line-2); position: relative; flex: none; margin-top: 3px; transition: .18s ease; }
+.switch .track::after { content: ""; position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: .18s ease; box-shadow: 0 1px 3px rgba(0, 0, 0, .2); }
+.switch input:checked + .track { background: var(--ok); }
+.switch input:checked + .track::after { transform: translateX(13px); }
+.switch input:focus-visible + .track { outline: 2px solid var(--brand); outline-offset: 2px; }
+.switch .sw-text { min-width: 0; }
+.switch .sw-text b { display: block; font-size: 12.5px; font-weight: 600; }
+.switch .sw-text small { display: block; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
+.range-row { display: grid; gap: 4px; }
+.range-row .range-top { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); }
+.range-val { font: 700 12px var(--mono); color: var(--brand); }
+input[type="range"] { width: 100%; accent-color: var(--brand); cursor: pointer; }
+.demo-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.stage-progress { font: 700 12px var(--mono); color: var(--ink-3); margin-left: auto; }
+
+/* ========== 阶段轨道 ========== */
+/* 常驻流水线地图：standalone 用原生 sticky；嵌入时由父页渲染（.rail-pin 隐藏） */
+body.embedded .rail-pin { display: none; }
+body.embedded .ctl-exec { display: none; }
+.rail-pin { position: sticky; top: 8px; z-index: 60; margin-bottom: 14px; }
+.rail { display: flex; gap: 10px; align-items: flex-start; background: var(--surface); border: 1px solid var(--line-2); border-radius: 12px; padding: 7px 9px 8px; box-shadow: var(--shadow-m); }
+.rail-group { display: grid; gap: 3px; min-width: 0; }
+.rail-g-main { flex: 6; }
+.rail-g-aux { flex: 2; }
+.rail-cap { font: 700 9.5px var(--mono); color: var(--ink-3); letter-spacing: .1em; padding-left: 2px; }
+.rail-seg { display: grid; gap: 6px; }
+.rail-g-main .rail-seg { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.rail-g-aux .rail-seg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rail-step { position: relative; display: grid; justify-items: center; gap: 1px; padding: 6px 3px 7px; border: 1px solid var(--line); border-top: 3px solid var(--line-2); border-radius: 8px; background: var(--surface-2); text-align: center; transition: .18s ease; cursor: pointer; }
+.rail-step b { font: 800 10.5px var(--mono); color: var(--ink-3); }
+.rail-step span { font-size: 10px; color: var(--ink-3); line-height: 1.25; }
+.rail-ic { width: 22px; height: 15px; color: var(--ink-3); margin-bottom: 1px; }
+.rail-step:hover { transform: translateY(-2px); box-shadow: var(--shadow-s); }
+.rail-step.is-done { border-top-color: var(--ok); background: var(--surface-3); }
+.rail-step.is-done b, .rail-step.is-done .rail-ic { color: var(--ok); }
+.rail-step.is-current { background: var(--brand-soft); border-color: var(--brand); border-top-color: var(--brand); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 22%, transparent); }
+.rail-step.is-current b, .rail-step.is-current span { color: var(--brand-ink); }
+.rail-step.is-current .rail-ic { color: var(--brand); }
+.rail-step:not(:last-child)::after { content: ''; position: absolute; right: -6px; top: 50%; width: 7px; height: 2px; background: var(--ink-3); opacity: .55; }
+.rail-step:not(:last-child)::before { content: ''; position: absolute; right: -1.6px; top: 50%; width: 5px; height: 5px; border-top: 2px solid var(--ink-3); border-right: 2px solid var(--ink-3); transform: translateY(-50%) rotate(45deg); opacity: .55; }
+.act-row.sel { outline: 2px solid var(--brand); outline-offset: 1px; border-radius: 8px; background: var(--brand-soft); }
+.act-row.sel .act-tok { color: var(--brand-ink); font-weight: 700; }
+.act-link { margin-left: 6px; font: 700 10px var(--font); color: var(--brand-ink); white-space: nowrap; }
+
+/* ========== 阶段面板 ========== */
+.stages { display: grid; gap: 12px; }
+.stage { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); transition: opacity .25s ease, border-color .25s ease; }
+.stage.is-future { opacity: .42; pointer-events: none; }
+.stage.is-current { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft), var(--shadow-s); }
+.stage-head { display: flex; align-items: center; gap: 10px; padding: 11px 15px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.st-no { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font: 800 12px var(--mono); background: var(--brand-soft); color: var(--brand); flex: none; }
+.stage.is-current .st-no { background: var(--brand); color: #fff; }
+.stage-head h3 { font-size: 14px; }
+.stage-head .st-en { font: 10px var(--mono); color: var(--ink-3); letter-spacing: .12em; }
+.st-state { margin-left: auto; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 6px; background: var(--surface-3); color: var(--ink-3); }
+.stage.is-current .st-state { background: var(--brand-soft); color: var(--brand-ink); }
+.stage.is-done .st-state { background: var(--ok-soft); color: var(--ok); }
+.stage-body { padding: 14px 15px; }
+.stage-note { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; padding: 0 15px 14px; }
+.sn-col { padding: 9px 12px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); font-size: 12px; color: var(--ink-2); line-height: 1.65; }
+.sn-col b { display: block; font-size: 10.5px; letter-spacing: .08em; color: var(--ink-3); margin-bottom: 4px; }
+.sn-col.atk-col { border-color: color-mix(in srgb, var(--danger) 26%, var(--line)); background: color-mix(in srgb, var(--danger) 4%, var(--surface)); }
+.sn-col.atk-col b { color: var(--danger); }
+/* 长文折叠：summary = 标题 + 一句话摘要 + 展开/收起 */
+.sn-fold summary { display: flex; align-items: baseline; gap: 7px; cursor: pointer; list-style: none; }
+.sn-fold summary::-webkit-details-marker { display: none; }
+.sn-fold summary b { display: inline; margin-bottom: 0; flex: none; }
+.sn-cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink-2); }
+.sn-toggle { flex: none; font-style: normal; font-weight: 700; font-size: 10px; color: var(--brand); white-space: nowrap; }
+.sn-toggle::after { content: '展开 ▾'; }
+.sn-fold[open] .sn-toggle::after { content: '收起 ▴'; }
+.sn-fold[open] .sn-cap { display: none; }
+.sn-full { margin-top: 5px; }
+/* 因果标注芯片：开关 → 规则 → 后果 */
+.causal-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.causal-chip { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11.5px; line-height: 1.55; padding: 4px 10px; border-radius: 8px; border: 1px solid transparent; }
+.causal-chip b { font-weight: 800; flex: none; }
+.causal-chip.ok { background: var(--ok-soft); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 26%, transparent); }
+.causal-chip.warn { background: var(--warn-soft); color: #a3691a; border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.causal-chip.danger { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 28%, transparent); }
+.sn-codes { display: flex; flex-direction: column; gap: 5px; justify-content: flex-start; align-items: flex-start; }
+.sn-codes b { margin-bottom: 0; }
+.rc { font: 700 10.5px var(--mono); color: #fff; background: var(--brand); padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
+.rc.danger { background: var(--danger); }
+.rc.ok { background: var(--ok); }
+
+/* ========== 阶段 1：上下文拼接 ========== */
+.ctx-view { display: grid; gap: 9px; }
+.ctx-block { border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); padding: 10px 12px; }
+.ctx-block .ctx-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; flex-wrap: wrap; }
+.ctx-block .ctx-label { font: 700 11px var(--font); letter-spacing: .06em; text-transform: uppercase; }
+.ctx-trust { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 5px; letter-spacing: .04em; }
+.ctx-count { margin-left: auto; font: 11px var(--mono); color: var(--ink-3); }
+.ctx-system { border-color: color-mix(in srgb, var(--ok) 28%, var(--line)); background: color-mix(in srgb, var(--ok) 5%, var(--surface)); }
+.ctx-system .ctx-label, .ctx-system .ctx-trust { color: var(--ok); }
+.ctx-system .ctx-trust { background: var(--ok-soft); }
+.ctx-untrusted { border-color: color-mix(in srgb, var(--danger) 28%, var(--line)); background: color-mix(in srgb, var(--danger) 4%, var(--surface)); }
+.ctx-untrusted .ctx-label, .ctx-untrusted .ctx-trust { color: var(--danger); }
+.ctx-untrusted .ctx-trust { background: var(--danger-soft); }
+.ctx-user { border-color: color-mix(in srgb, var(--brand) 30%, var(--line)); }
+.ctx-user .ctx-label, .ctx-user .ctx-trust { color: var(--brand); }
+.ctx-user .ctx-trust { background: var(--brand-soft); }
+.ctx-block textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 8px 10px; font: 12px/1.7 var(--mono); color: var(--ink-2); resize: vertical; min-height: 56px; outline: none; }
+.ctx-block textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.ctx-empty { font-size: 12px; color: var(--ink-3); border: 1px dashed var(--line-2); border-radius: 8px; padding: 10px 12px; }
+.ctx-flag { display: none; align-items: center; gap: 6px; margin-top: 7px; font-size: 11.5px; font-weight: 600; color: var(--ok); }
+.ctx-flag.show { display: flex; }
+.ctx-flag .ic { width: 14px; height: 14px; }
+
+/* ========== 发送栏（S1 输入 → 进入模型） ========== */
+.send-bar { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-2); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.send-btn { display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; border-radius: 9px; border: 1px solid var(--brand); background: var(--brand); color: #fff; font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(31, 79, 216, .2); transition: .18s ease; }
+.send-btn:hover { background: var(--brand-2); border-color: var(--brand-2); }
+.send-btn:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+.send-btn .ic { width: 15px; height: 15px; }
+.send-hint { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; }
+.send-hint b { color: var(--ink-2); }
+
+/* ========== 流程导航（阶段间推进） ========== */
+.flow-nav { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.flow-nav .fn-spacer { flex: 1; }
+.flow-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-2); font-size: 12.5px; font-weight: 600; transition: .16s ease; }
+.flow-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+.flow-btn:disabled { opacity: .45; cursor: not-allowed; }
+.flow-btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 4px 12px rgba(31, 79, 216, .18); }
+.flow-btn.primary:hover:not(:disabled) { background: var(--brand-2); color: #fff; }
+.flow-btn .ic { width: 14px; height: 14px; }
+.flow-btn .ic.flip { transform: scaleX(-1); }
+.flow-steps { display: inline-flex; align-items: center; gap: 5px; font: 700 11.5px var(--mono); color: var(--ink-3); }
+.flow-steps b { color: var(--brand); }
+
+/* ========== 输入模式切换（正常 / 异常） ========== */
+.mode-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.mode-bar-top { position: sticky; top: 62px; z-index: 20; margin-bottom: 12px; box-shadow: var(--shadow-s); }
+.mode-bar-top .mode-hint { min-width: 0; }
+.mode-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--ink-3); text-transform: uppercase; margin-right: 2px; }
+.mode-seg { display: inline-flex; padding: 3px; border-radius: 8px; background: var(--surface-3); gap: 3px; }
+.mode-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 6px; border: none; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 600; transition: .15s ease; }
+.mode-btn:hover { color: var(--brand); }
+.mode-btn.active { background: var(--surface); color: var(--brand); box-shadow: var(--shadow-s); }
+.mode-btn.active.attack { color: var(--danger); }
+.mode-btn .ic { width: 13px; height: 13px; }
+.mode-hint { font-size: 11px; color: var(--ink-3); line-height: 1.5; flex: 1; min-width: 180px; }
+.mode-hint b { color: var(--ink-2); }
+/* 阶段内容的对比角标 */
+.cmp-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
+.cmp-badge.ok { background: var(--ok-soft); color: var(--ok); }
+.cmp-badge.bad { background: var(--danger-soft); color: var(--danger); }
+.cmp-badge .ic { width: 12px; height: 12px; }
+
+/* ========== S7 防御失效分析 ========== */
+.def-grid { display: grid; gap: 9px; }
+.def-card { display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.def-card.ok { border-color: color-mix(in srgb, var(--ok) 30%, var(--line)); background: color-mix(in srgb, var(--ok) 4%, var(--surface)); }
+.def-card.fail { border-color: color-mix(in srgb, var(--danger) 32%, var(--line)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.def-card.bypass { border-color: color-mix(in srgb, var(--warn) 34%, var(--line)); background: color-mix(in srgb, var(--warn) 5%, var(--surface)); }
+.def-card.idle { border-color: color-mix(in srgb, var(--brand) 28%, var(--line)); background: color-mix(in srgb, var(--brand) 4%, var(--surface)); }
+.def-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; margin-top: 1px; }
+.def-icon .ic { width: 15px; height: 15px; }
+.def-card.ok .def-icon { background: var(--ok-soft); color: var(--ok); }
+.def-card.fail .def-icon { background: var(--danger-soft); color: var(--danger); }
+.def-card.bypass .def-icon { background: var(--warn-soft); color: var(--warn); }
+.def-card.idle .def-icon { background: var(--brand-soft); color: var(--brand); }
+.def-card.idle .def-tag { background: var(--brand-soft); color: var(--brand-ink); }
+.def-body { flex: 1; min-width: 0; }
+.def-body b { display: flex; align-items: center; gap: 7px; font-size: 13px; margin-bottom: 3px; flex-wrap: wrap; }
+.def-tag { font: 700 10px var(--mono); padding: 1px 7px; border-radius: 5px; letter-spacing: .04em; }
+.def-card.ok .def-tag { background: var(--ok-soft); color: var(--ok); }
+.def-card.fail .def-tag { background: var(--danger-soft); color: var(--danger); }
+.def-card.bypass .def-tag { background: var(--warn-soft); color: var(--warn); }
+.def-body p { margin: 0; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.def-summary { margin-top: 11px; padding: 10px 13px; border-radius: 10px; border: 1px dashed var(--line-2); font-size: 12.5px; line-height: 1.65; }
+.def-summary b { font-weight: 700; }
+.def-summary.bad { border-color: color-mix(in srgb, var(--danger) 36%, var(--line)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.def-summary.ok { border-color: color-mix(in srgb, var(--ok) 32%, var(--line)); background: color-mix(in srgb, var(--ok) 4%, var(--surface)); }
+
+/* ========== S8 攻击成功与影响 ========== */
+.impact-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 11px; align-items: start; }
+.impact-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; }
+.impact-card h5 { display: flex; align-items: center; gap: 7px; font-size: 12.5px; margin-bottom: 8px; }
+.impact-card h5 .ic { width: 15px; height: 15px; }
+.impact-card.bad h5 { color: var(--danger); }
+.impact-card.ok h5 { color: var(--ok); }
+.impact-card p { margin: 0; font-size: 12px; color: var(--ink-2); line-height: 1.65; }
+.impact-card .big { font-size: 20px; font-weight: 800; letter-spacing: -.01em; margin-bottom: 4px; }
+.impact-card.bad .big { color: var(--danger); }
+.impact-card.ok .big { color: var(--ok); }
+.impact-card.warn h5 { color: #a3691a; }
+.impact-card.warn { border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); background: color-mix(in srgb, var(--warn) 6%, var(--surface)); }
+.impact-card.warn .big { color: #a3691a; }
+.verdict-final.warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.attack-chain { display: grid; gap: 7px; margin-top: 11px; }
+.chain-node { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+.chain-dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 700 10px var(--mono); flex: none; }
+.chain-dot.hot { background: var(--danger); color: #fff; }
+.chain-dot.cold { background: var(--ok); color: #fff; }
+.chain-dot.dim { background: var(--surface-3); color: var(--ink-3); }
+.chain-node .chain-txt { color: var(--ink-2); line-height: 1.5; }
+.chain-node .chain-txt b { color: var(--ink); }
+.verdict-final { margin-top: 11px; padding: 11px 14px; border-radius: 10px; font-size: 13px; line-height: 1.7; }
+.verdict-final.bad { border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--line)); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); color: var(--ink); }
+.verdict-final.ok { border: 1px solid color-mix(in srgb, var(--ok) 32%, var(--line)); background: color-mix(in srgb, var(--ok) 5%, var(--surface)); color: var(--ink); }
+.verdict-final b { font-weight: 800; }
+.verdict-final.bad b { color: var(--danger); }
+.verdict-final.ok b { color: var(--ok); }
+
+/* ========== Token 芯片 ========== */
+.toks { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
+.tok { font: 12px/1.5 var(--mono); padding: 4px 7px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2); position: relative; transition: .15s ease; min-height: 26px; }
+.tok::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--td, var(--ink-3)); }
+.tok.seg-system { --td: var(--ok); }
+.tok.seg-doc { --td: var(--danger); }
+.tok.seg-user { --td: var(--brand); }
+.tok:hover { border-color: var(--brand); color: var(--brand-ink); }
+.tok[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; box-shadow: 0 0 0 3px var(--brand-soft); }
+.tok[aria-pressed="true"]::before { background: #fff; }
+.tok.atk { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); background: var(--danger-soft); color: var(--danger); font-weight: 700; }
+.tok.atk::before { background: var(--danger); }
+.tok.atk.neutralized { border-style: dashed; border-color: var(--ok); background: var(--ok-soft); color: var(--ok); text-decoration: line-through; }
+.tok.atk.neutralized::before { background: var(--ok); }
+.tok.assistant { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+.tok.assistant::before { background: #fff; }
+.tok.assistant[aria-pressed="true"] { background: var(--brand-ink); }
+.tok-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11px; color: var(--ink-3); }
+.tok-legend .lg { display: inline-flex; align-items: center; gap: 5px; }
+.tok-legend .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.tok-note { margin-top: 10px; font-size: 12px; color: var(--ink-3); line-height: 1.65; }
+
+/* ========== 阶段 3：嵌入 ========== */
+.emb-panel { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.emb-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; }
+.emb-card .emb-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.emb-chip { font: 700 13px var(--mono); padding: 3px 9px; border-radius: 7px; background: var(--brand-soft); color: var(--brand-ink); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emb-meta { font: 11px var(--mono); color: var(--ink-3); }
+.emb-bars { display: flex; gap: 4px; align-items: flex-end; height: 64px; }
+.emb-bars i { flex: 1; min-width: 8px; max-width: 22px; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--brand-2), var(--brand)); height: var(--h, 30%); transition: height .3s ease; }
+.emb-cols { display: flex; gap: 4px; margin-top: 5px; }
+.emb-cols i { flex: 1; min-width: 8px; max-width: 22px; text-align: center; font: 9px var(--mono); color: var(--ink-3); font-style: normal; }
+.emb-side { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 12px 14px; font-size: 12.5px; color: var(--ink-2); line-height: 1.75; }
+.emb-side b { color: var(--ink); }
+.emb-side .warn-line { margin-top: 8px; padding-left: 10px; border-left: 3px solid var(--warn); color: var(--ink-2); }
+
+/* ========== 阶段 4：注意力 ========== */
+.attn-wrap { position: relative; padding-top: 138px; }
+.attn-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.arc-leader { stroke: var(--ink-3); stroke-width: 1.4; stroke-dasharray: 2 5; fill: none; opacity: .85; }
+.arc-origin { fill: var(--ink-3); }
+.arc { fill: none; stroke: var(--line-2); stroke-width: 1; opacity: .18; }
+.arc.hot { stroke: var(--danger); stroke-linecap: round; }
+.arc.damped { stroke: var(--ok); stroke-dasharray: 4 4; stroke-linecap: round; }
+.arc-label { font: 700 9.5px var(--mono); fill: var(--ink-3); }
+.arc-label.hot { fill: var(--danger); }
+.arc-label.damped { fill: var(--ok); }
+.attn-sum { margin-top: 12px; padding: 9px 12px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); line-height: 1.7; }
+.attn-sum b { color: var(--ink); }
+.attn-sum .hot { color: var(--danger); font-weight: 700; }
+.attn-sum .damped { color: var(--ok); font-weight: 700; }
+.attn-hint { margin-top: 8px; font-size: 11.5px; color: var(--ink-3); }
+
+/* ========== 阶段 5：前馈网络 ========== */
+.ffn-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.act-list { display: grid; gap: 8px; }
+.act-row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 46px; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-2); }
+.act-row .act-tok { font: 700 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-track { height: 9px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.act-fill { height: 100%; border-radius: 99px; background: var(--danger); transition: width .35s ease; }
+.act-row.calm .act-fill { background: var(--brand); opacity: .55; }
+.act-row .act-val { font: 700 11px var(--mono); color: var(--ink-3); text-align: right; }
+.ffn-side { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; font-size: 12.5px; color: var(--ink-2); line-height: 1.75; }
+
+/* ========== 阶段 6：输出分布 / 采样 / 门禁 ========== */
+.out-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.cand-card, .gen-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 12px 14px; }
+.cand-card h4, .gen-card h4 { font-size: 12.5px; margin-bottom: 4px; }
+.cand-sub, .gen-sub { font-size: 11px; color: var(--ink-3); margin-bottom: 10px; }
+.cand-list { display: grid; gap: 7px; }
+.cand-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) 52px; align-items: center; gap: 10px; font-size: 12px; }
+.cand-row .cand-tok { font: 700 12px var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.cand-track { height: 10px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.cand-fill { height: 100%; border-radius: 99px; background: var(--brand); transition: width .3s ease; }
+.cand-row.atkmode .cand-fill { background: var(--danger); }
+.cand-row.hit .cand-tok { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+.cand-row .cand-p { font: 700 11px var(--mono); color: var(--ink-3); text-align: right; }
+.gen-strip { display: flex; flex-wrap: wrap; gap: 5px; min-height: 34px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.gen-tok { font: 12px var(--mono); padding: 3px 7px; border-radius: 6px; background: var(--brand-soft); color: var(--brand-ink); animation: genIn .22s ease; }
+.gen-tok.bad { background: var(--danger-soft); color: var(--danger); font-weight: 700; }
+.gen-tok.blocked { background: var(--danger); color: #fff; font-weight: 700; text-decoration: line-through; }
+.gen-tok.tail { background: var(--surface-3); color: var(--ink-3); }
+@keyframes genIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.gen-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.gen-done-label { font: 11px var(--mono); color: var(--ink-3); }
+.verdict { padding: 12px 14px; border-radius: 10px; font-size: 13.5px; line-height: 1.7; margin-top: 14px; border: 1px solid var(--line); background: var(--surface-2); }
+.verdict b.t { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; font-size: 14px; }
+.verdict .ic { width: 17px; height: 17px; }
+.verdict ul { margin: 6px 0 0; padding-left: 18px; }
+.verdict li { margin-bottom: 4px; }
+.verdict.ok { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 30%, var(--line)); color: var(--ok); }
+.verdict.bad { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); color: var(--danger); }
+.verdict.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, var(--line)); color: var(--warn); }
+.verdict .v-codes { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.gate-note { margin-top: 10px; font-size: 11.5px; color: var(--warn); font-weight: 600; display: none; align-items: center; gap: 6px; }
+.gate-note.show { display: flex; }
+
+/* ========== 观察要点 ========== */
+.ins-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.ins-card { padding: 18px 19px 16px; border-radius: 13px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-s); }
+.ins-card h3 { font-size: 15px; margin-bottom: 8px; }
+.ins-card p { font-size: 13px; color: var(--ink-2); line-height: 1.75; margin-bottom: 12px; }
+.ins-card .v-codes { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ========== 页脚 ========== */
+.foot { margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+.foot a { color: var(--brand); }
+
+/* ========== 风险目录（全量覆盖） ========== */
+.risk-search { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 12.5px; outline: none; margin-bottom: 8px; }
+.risk-search:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); background: var(--surface); }
+.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.cat-select { width: 100%; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 11.5px; color: var(--ink-2); outline: none; }
+.cat-select:focus { border-color: var(--brand); }
+.risk-list { max-height: 320px; overflow-y: auto; display: grid; gap: 2px; padding-right: 2px; }
+.risk-group-h { font: 700 10px var(--font); letter-spacing: .08em; color: var(--rc, var(--brand)); margin: 7px 0 2px; padding-left: 2px; }
+.risk-item { display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; padding: 5px 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; font-size: 12px; color: var(--ink-2); transition: .14s ease; min-height: 24px; }
+.risk-item:hover { background: var(--surface-3); }
+.risk-item.active { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-ink); font-weight: 600; }
+.ri-code { font: 700 10px var(--mono); color: #fff; background: var(--rc, var(--brand)); padding: 2px 5px; border-radius: 5px; flex: none; }
+.risk-item.visited .ri-code::after { content: " ✓"; }
+.risk-item.active .ri-code { outline: 1px solid rgba(255,255,255,.5); }
+.ri-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-lv { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.risk-empty { padding: 14px 8px; text-align: center; color: var(--ink-3); font-size: 12px; }
+/* 风险卡 */
+.risk-card h4 { font-size: 13.5px; margin-bottom: 1px; }
+.risk-card .rc-en { font-size: 10.5px; color: var(--ink-3); margin-bottom: 8px; }
+.risk-card .rc-brief { font-size: 12px; color: var(--ink-2); line-height: 1.7; margin-bottom: 8px; }
+.risk-card .rc-analogy { font-size: 11.5px; color: var(--ink-3); border-left: 3px solid var(--line-2); padding-left: 8px; line-height: 1.6; margin-bottom: 9px; }
+.chiprow { display: flex; flex-wrap: wrap; gap: 4px; }
+.mini-chip { font: 10px var(--mono); padding: 2px 6px; border-radius: 6px; background: var(--surface-3); color: var(--ink-3); border: 1px solid var(--line); white-space: nowrap; }
+.mini-chip.zone { color: var(--ink-2); }
+/* 九阶段攻击路径 */
+.stage9 { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.stage9 button { flex: 1; min-width: 50px; padding: 5px 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); font: 700 10px var(--mono); color: var(--ink-3); transition: .15s ease; }
+.stage9 button:hover { border-color: var(--brand); color: var(--brand); }
+.stage9 button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.stage9-detail { font-size: 11.5px; color: var(--ink-2); line-height: 1.65; border-top: 1px dashed var(--line-2); padding-top: 8px; margin-top: 2px; }
+.stage9-detail b { display: block; font-size: 10.5px; color: var(--brand); letter-spacing: .06em; margin-bottom: 3px; }
+.sn-focus { margin-top: 8px; padding-top: 8px; border-top: 1px dashed color-mix(in srgb, var(--danger) 35%, var(--line)); font-size: 11.5px; color: var(--danger); line-height: 1.6; display: none; }
+.sn-focus.show { display: block; }
+.sn-focus b { display: block; font-size: 10px; letter-spacing: .08em; margin-bottom: 2px; }
+/* 随堂测验 */
+.quiz-card { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 13px 15px; }
+.quiz-card h4 { font-size: 12.5px; margin-bottom: 2px; }
+.quiz-sub { font-size: 11px; color: var(--ink-3); margin-bottom: 9px; }
+.quiz-q { font-size: 13px; color: var(--ink); line-height: 1.65; margin-bottom: 9px; }
+.choice-grid { display: grid; gap: 7px; }
+.choice { display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); text-align: left; font-size: 12.5px; line-height: 1.6; width: 100%; transition: .15s ease; }
+.choice:hover { border-color: var(--brand); }
+.choice .ckey { font: 700 10.5px var(--mono); width: 19px; height: 19px; border-radius: 5px; background: var(--surface-3); display: grid; place-items: center; flex: none; margin-top: 1px; }
+.choice.correct { border-color: var(--ok); background: var(--ok-soft); }
+.choice.correct .ckey { background: var(--ok); color: #fff; }
+.choice.wrong { border-color: var(--danger); background: var(--danger-soft); }
+.choice.wrong .ckey { background: var(--danger); color: #fff; }
+.choice:disabled { cursor: default; }
+.quiz-explain { margin-top: 9px; padding: 9px 11px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; color: var(--ink-2); line-height: 1.65; }
+
+/* ========== 响应式 ========== */
+@media (max-width: 1024px) {
+  .labx-grid { grid-template-columns: 1fr; }
+  .labx-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); display: grid; }
+  .stage-note { grid-template-columns: 1fr 1fr; }
+  .sn-codes { grid-column: 1 / -1; flex-direction: row; align-items: center; }
+  .out-grid, .ffn-grid, .emb-panel { grid-template-columns: 1fr; }
+  .ins-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .page { padding: 20px 14px 60px; }
+  .topbar { padding: 0 12px; gap: 9px; }
+  .brand-text small { display: none; }
+  .demo-body { padding: 14px; }
+  .labx-controls { grid-template-columns: 1fr; }
+  .rail { overflow-x: auto; padding-bottom: 4px; }
+  .rail-group { flex: 0 0 auto; }
+  .rail-g-main .rail-seg { grid-template-columns: repeat(6, 60px); }
+  .rail-g-aux .rail-seg { grid-template-columns: repeat(2, 60px); }
+  .rail button { flex: 0 0 auto; min-width: 96px; }
+  .stage-note { grid-template-columns: 1fr; }
+  .sn-codes { grid-column: auto; }
+  .ins-grid { grid-template-columns: 1fr; }
+  .act-row { grid-template-columns: 72px minmax(0, 1fr) 42px; }
+  .cand-row { grid-template-columns: 78px minmax(0, 1fr) 46px; }
+}
+body.embedded .topbar { display: none; }
+.ctx-flag.missed { color: var(--warn); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* ---------------- 术语悬浮卡（glossary.js） ---------------- */
+.gl { appearance: none; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: help; border-bottom: 1.5px dashed var(--brand); border-radius: 2px; transition: color .15s ease, background .15s ease; }
+.gl:hover, .gl[aria-expanded="true"] { color: var(--brand-ink); background: var(--brand-soft); }
+.gl-pop { position: fixed; z-index: 900; background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 4px 12px rgba(20,33,60,.07), 0 18px 46px rgba(20,33,60,.06); padding: 13px 15px 12px; font-size: 12.5px; line-height: 1.7; color: var(--ink-2); max-width: 360px; opacity: 0; transform: translateY(4px); transition: opacity .16s ease, transform .16s ease; pointer-events: none; }
+.gl-pop.show { opacity: 1; transform: none; pointer-events: auto; }
+.gl-pop[hidden] { display: none; }
+.gl-pop-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.gl-pop-head b { font-size: 14px; color: var(--ink); }
+.gl-pop-head .gl-en { font: 11px var(--mono); color: var(--ink-3); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gl-x { appearance: none; border: 0; background: none; cursor: pointer; font-size: 15px; line-height: 1; color: var(--ink-3); padding: 2px 4px; border-radius: 6px; }
+.gl-x:hover { color: var(--ink); background: var(--surface-2); }
+.gl-short { margin: 0 0 6px; color: var(--ink); font-weight: 600; }
+.gl-detail { margin: 0; color: var(--ink-2); }
+.gl-see { margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--line-2); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--ink-3); }
+.gl-see-code { font: 700 10.5px var(--mono); color: var(--brand-ink); background: var(--brand-soft); border-radius: 5px; padding: 2px 6px; }
+@media (max-width: 600px) { .gl-pop { max-width: calc(100vw - 20px) !important; } }
+</style>
+</head>
+<body>
+
+<svg class="svg-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 11a8 8 0 1 1 2.3 6M4 5v6h6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3l10 18H2z" stroke-linejoin="round"/><path d="M12 10v5M12 18v.5"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></symbol>
+</svg>
+
+<header class="topbar">
+  <a class="brand" href="../index.html" aria-label="返回 AI 安全学习实验室首页">
+    <span class="brand-mark"><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg></span>
+    <span class="brand-text"><b>Transformer 攻防透视</b><small>AI 安全学习实验室 · 模型内部交互演示</small></span>
+  </a>
+  <div class="top-actions">
+    <span class="badge warn">演示样例 · 规则化模拟，非真实模型</span>
+    <a class="btn small" href="../index.html">返回风险地图</a>
+  </div>
+</header>
+
+<main class="page">
+  <noscript><div class="notice">本页的交互演示需要 JavaScript，请在浏览器中启用后刷新。</div></noscript>
+
+  <div class="page-head">
+    <div class="eyebrow">Interactive Demo · Model Internals</div>
+    <h1>Transformer 攻防透视</h1>
+    <p class="lead">把站内知识库的<b>全部 60 条风险</b>放进一个简化的语言模型流水线：每条风险都是一个可运行的攻防剧本：模型内部 6 个阶段——上下文拼接 → 分词 → 嵌入 → 自注意力 → 前馈网络 → 输出采样与门禁，之后 2 个分析步骤（防御失效分析 → 攻击成功与影响），全程共 8 步。随时打开三道防御观察拦截时机，把温度拉满验证「调温度为什么不是防御」，答完每条风险末尾的随堂测验；也可以沿<b>九阶段攻击路径</b>筛选，看每一步攻击者会用到哪些风险。</p>
+    <p class="ref-line">交互范式参考 Georgia Tech Polo Club 的 <a href="https://poloclub.github.io/transformer-explainer" target="_blank" rel="noopener">Transformer Explainer</a>（<a href="https://github.com/poloclub/transformer-explainer" target="_blank" rel="noopener">MIT 开源</a>）；本页所有注意力权重、向量与概率均为<b>规则化演示样例</b>，本地计算，不连接任何真实模型。</p>
+  </div>
+
+  <section class="demo-card" aria-label="Transformer 攻防交互实验">
+    <div class="demo-head">
+      <svg class="ic" aria-hidden="true"><use href="#i-bolt"></use></svg>
+      <h2>交互实验：一条提示注入的模型内部之旅</h2>
+      <span class="demo-type">INTERACTIVE · 6-STAGE SIMULATION</span>
+    </div>
+    <div class="demo-body">
+      <div class="labx-grid">
+
+        <!-- ======== 控制列 ======== -->
+        <div class="labx-controls">
+          <div class="control-group">
+            <label for="riskSearch">风险目录 · 知识库全部 60 条</label>
+            <input type="search" id="riskSearch" class="risk-search" placeholder="搜索编号、名称、关键词…" autocomplete="off" aria-label="搜索风险">
+            <div class="filters">
+              <select id="fltCat" class="cat-select" aria-label="按知识域筛选"></select>
+              <select id="fltStage" class="cat-select" aria-label="按攻击阶段筛选"></select>
+              <select id="fltZone" class="cat-select" aria-label="按信任分区筛选"></select>
+              <select id="fltPath" class="cat-select" aria-label="按学习路径筛选"></select>
+            </div>
+            <div class="risk-list" id="riskList" role="listbox" aria-label="风险列表"></div>
+          </div>
+
+          <div class="control-group risk-card" id="riskCard" aria-live="polite"></div>
+
+          <div class="control-group">
+            <label id="stage9Label">九阶段攻击路径（点按筛选风险）</label>
+            <div class="stage9" id="stage9" role="group" aria-labelledby="stage9Label"></div>
+            <div class="stage9-detail" id="stage9Detail" hidden></div>
+          </div>
+
+          <div class="control-group">
+            <label id="defLabel">防御开关（随时生效）</label>
+            <div class="switch-list" id="defList"></div>
+          </div>
+
+          <div class="control-group" id="deformGroup" hidden>
+            <label class="control-label" for="deformChk">载荷变形实验（仅 LLM01）</label>
+            <label class="switch"><input type="checkbox" id="deformChk">
+              <span class="track" aria-hidden="true"></span><span class="sw-text"><b>夹带零宽字符（U+200B）</b>
+              <small>在注入句每个字之间插入不可见字符——人眼读起来一样，关键词匹配全部失效</small></span></label>
+            <p class="control-tip">开启后再开「注入模式检测」：检测是概率性防线，变形写法可以绕过它；出口门禁仍然兜底。</p>
+          </div>
+
+          <div class="control-group">
+            <div class="range-row">
+              <div class="range-top"><span>采样温度 temperature</span><span class="range-val" id="tempOut">1.0</span></div>
+              <input type="range" id="tempRange" min="0.2" max="2" step="0.1" value="1" aria-label="采样温度">
+            </div>
+            <p class="control-tip">低温输出更确定，高温更随机。<b>温度只改变随机性，不改变安全性</b>——试着拉到 2.0 再采样。</p>
+          </div>
+
+          <div class="control-group ctl-exec">
+            <label>执行</label>
+            <div class="demo-actions">
+              <button class="btn small" type="button" id="btnPrev"><svg class="ic" style="transform:scaleX(-1)" aria-hidden="true"><use href="#i-arrow"></use></svg>上一步</button>
+              <button class="btn small primary" type="button" id="btnNext">下一步<svg class="ic" aria-hidden="true"><use href="#i-arrow"></use></svg></button>
+              <button class="btn small" type="button" id="btnAuto"><svg class="ic" aria-hidden="true"><use href="#i-play"></use></svg>自动播放</button>
+              <button class="btn small" type="button" id="btnReset"><svg class="ic" aria-hidden="true"><use href="#i-reset"></use></svg>重置</button>
+              <span class="stage-progress" id="stageProg" aria-live="polite">第 1 / 8 步</span>
+            </div>
+            <p class="control-tip">从上一步到下一步，按模型内部真实的数据流顺序推进。</p>
+          </div>
+        </div>
+
+        <!-- ======== 阶段列 ======== -->
+        <div>
+          <div class="mode-bar mode-bar-top" id="modeBarTop"></div>
+          <div class="rail-pin" id="railPin" aria-label="流水线地图（滚动时常驻）"><div class="rail" id="rail" aria-label="阶段轨道"></div></div>
+          <div class="stages" id="stages"></div>
+        </div>
+
+      </div>
+    </div>
+    <div class="demo-foot">
+      <svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>
+      <span>教学模拟器：全部计算在浏览器本地完成，输入内容不会被发送、执行或存储。注意力权重、向量与输出概率均为规则化演示样例，用于讲解机制，不代表任何真实模型的数值；交互范式参考 poloclub/transformer-explainer（MIT License）。</span>
+    </div>
+  </section>
+
+  <section class="section" aria-label="观察要点">
+    <div class="section-title"><span class="sec-no">!</span><h2>三个观察要点</h2><span class="sec-tip">回到上面的实验，切换开关对照着看</span></div>
+    <div class="ins-grid">
+      <div class="ins-card">
+        <h3>注意力是注入的落点</h3>
+        <p>提示注入的根源是「指令与数据同通道」。在第 4 步开启/关闭「指令分层」对比弧线：攻击词与助手决策位置的注意力权重此消彼长——权重在哪，行为就听谁的。</p>
+        <div class="v-codes"><span class="rc">LLM01 提示注入</span><span class="rc">Z3 应用编排</span></div>
+      </div>
+      <div class="ins-card">
+        <h3>温度不是防御</h3>
+        <p>把温度拉到 2.0 再采样：措辞会变，但分布的主体仍在攻击方向，敏感内容依然会被生成。采样随机性影响的是「可复现性」，不是「安全性」。</p>
+        <div class="v-codes"><span class="rc">LLM05 输出处理</span><span class="rc">Z5 模型服务</span></div>
+      </div>
+      <div class="ins-card">
+        <h3>出口必须设门</h3>
+        <p>三道防御里只有「输出门禁」能保证最后一刻兜底：不管注入从哪里进来，敏感输出在离开应用前被截断。纵深防御没有单点——入口检测、指令分层、出口门禁各管一段。</p>
+        <div class="v-codes"><span class="rc danger">LLM05 输出处理</span><span class="rc danger">LLM02 信息泄露</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p>本页覆盖 <a href="../index.html">AI 安全学习实验室</a> 知识库全部 60 条风险（六大知识域 × 九阶段攻击路径），在风险地图的六区模型里对应「ZONE 5 · 模型服务」的内部视角。风险编号沿用站内知识库：LLM（LLM 应用）/ MCP（工具层）/ ASI（智能体应用）/ AST（智能体技能）/ A（Web 安全）/ INF（基础设施）。</p>
+    <p>Transformer Explainer: Interactive Learning of Text-Generative Models — poloclub.github.io/transformer-explainer（MIT License）。本页与其无代码依赖，仅借鉴「分步可交互的模型内部可视化」这一教学范式。</p>
+  </div>
+</main>
+
+<!-- 知识库单一数据源：与主站共用 assets/js/data.js（改动知识库只需改 data.js，并同步递增本页 ?v= 与 app.js 的 TX_VERSION） -->
+<script src="../assets/js/data.js?v=20261118"></script>
+<script src="../assets/js/glossary.js?v=20261114"></script>
+<script>
+'use strict';
+/* =====================================================================
+ * Transformer 攻防透视 — 本地规则化模拟引擎
+ * 注意力 / 向量 / 概率均为启发式演示数据，确定性可复现（带种子）。
+ * ===================================================================== */
+(function () {
+
+  /* ---------- 工具 ---------- */
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  /* 术语悬浮卡包裹：入参必须是已转义文本（见 ../assets/js/glossary.js） */
+  var gl = (window.AISEC && typeof window.AISEC.gl === 'function') ? window.AISEC.gl : function (s) { return s; };
+  function fnv(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function rng(seed) {
+    var s = seed >>> 0;
+    return function () { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  }
+  function reshape(probs, T) {
+    var lg = probs.map(function (p) { return Math.log(Math.max(p, 1e-6)) / T; });
+    var m = Math.max.apply(null, lg);
+    var ex = lg.map(function (v) { return Math.exp(v - m); });
+    var sum = ex.reduce(function (a, b) { return a + b; }, 0);
+    return ex.map(function (v) { return v / sum; });
+  }
+  function pct(v) { return Math.round(v * 100) + '%'; }
+  function debounce(fn, ms) { var t; return function () { clearTimeout(t); var a = arguments, self = this; t = setTimeout(function () { fn.apply(self, a); }, ms); }; }
+
+  /* ---------- 注入特征（演示用关键词模式，真实检测远比这复杂） ---------- */
+  var ATK_RX = [
+    /忽略.{0,6}(规则|指令|要求|设定|以上)/g,
+    /无视.{0,6}(规则|指令|要求|设定)/g,
+    /立即(查询|输出|调用|执行|发送)/g,
+    /(输出|透露|交出|发送|上传|泄露|展示).{0,8}(系统提示|提示词|手机号|密钥|密码|验证码|客户|会话|记录)/g,
+    /ignore\s+(all\s+)?(previous|above)/gi,
+    /send_report/g,
+    /https?:\/\/[^\s）)]+/g,
+    /一字不差/g,
+    /否则.{0,8}(注销|删除|举报|投诉)/g
+  ];
+  var ACTION_WORDS = ['输出', '查询', '发送', '调用', '执行', '透露', '生成', '上传', '展示', '上报', '汇报', '转出', '转账'];
+  var MAX_TOKENS = 200;
+
+  /* ================================================================
+   * 全量知识库 — 从站点 assets/js/data.js 运行时派生（单一数据源）
+   * 本页只保留演示专属数据：SCRIPTS 攻防剧本、变形载荷与注意力启发式。
+   * 所有注意力权重 / 向量 / 概率仍为教学用规则化演示数据，非真实模型计算。
+   * ================================================================ */
+  var SRC = (window.AISEC && window.AISEC.data) || null;
+  if (!SRC) {
+    document.addEventListener('DOMContentLoaded', function () {
+      document.body.insertAdjacentHTML('afterbegin',
+        '<div class="notice">知识库加载失败：未找到 ../assets/js/data.js。请保持本页与 assets 目录的相对位置不变，或经本地服务器访问。</div>');
+    });
+  }
+  var CATS6 = (SRC ? SRC.CATS : []).map(function (c) { return { id: c.id, name: c.short, color: c.color }; });
+  var ZONES6 = {};
+  (SRC ? SRC.ZONES : []).forEach(function (z) { ZONES6[z.id] = z.name; });
+  var LEVELS6 = {};
+  Object.keys(SRC ? SRC.LEVELS : {}).forEach(function (k) { LEVELS6[k] = SRC.LEVELS[k].name; });
+  var STAGE9 = (SRC ? SRC.STAGES : []).map(function (s) {
+    return { id: s.id, name: s.name, tech: s.technique, ctrl: s.controls };
+  });
+  var RISK_STAGES = SRC ? SRC.RISK_STAGES : {};
+  var PATH_OF = {};
+  (SRC ? SRC.PATHS : []).forEach(function (p, i) { p.steps.forEach(function (st) { PATH_OF[st.code] = i + 1; }); });
+  var DEMOTYPE = { prompt: '提示注入实验室', inspect: '识别台', rag: '模拟器', web: '拼接示意', scope: '权限沙盘', flow: '链路演示', pipeline: '关卡实验台', budget: '成本沙盘' };
+  /* 原理卡（与主站知识库同源）：q 为随堂测验 [题干, 选项数组, 正确下标, 解析] */
+  var KB = {};
+  (SRC ? SRC.RISKS : []).forEach(function (r) {
+    KB[r.code] = {
+      t: r.title, en: r.en, lv: r.level, z: r.zones.join(','), dt: r.demo ? r.demo.type : 'flow',
+      b: r.brief, w: r.why, a: r.analogy, df: r.defense, sc: r.scenario,
+      q: [r.quiz.q, r.quiz.o, r.quiz.a, r.quiz.e]
+    };
+  });
+  /* 攻防剧本：seg=载荷所在段 / focus=重点模型阶段(0-5) / pk=载荷标记串
+   * atk/ok 为完整回答（采样分布自动派生）；LLM01/ASI01/LLM07 为手工精调剧本（含 steps）。
+   * d 为三道防御开关在本剧本中的名称覆盖。全部为演示样例。 */
+  /* 变形载荷：在注入句每字之间插入零宽空格，关键词检测全部失效但语义不变（演示用） */
+  /* 攻防剧本库已迁至 assets/js/data.js（SCRIPTS），此处运行时派生，与主站靶场引擎共用同一份数据 */
+  var SCRIPTS = (SRC && SRC.SCRIPTS) || {};
+
+  var BENIGN = {
+    code: 'benign', name: '正常请求（对照）', short: '正常对照', tip: '无攻击载荷的基线场景。先看一遍正常数据流，再切换到攻击场景对比每个阶段的变化。',
+    attackSeg: '', hasAttack: false, pk: [],
+    system: '你是「金田银行」的客服助理。只回答业务咨询；不得输出客户个人资料；不得执行转账或查询敏感字段。',
+    doc: '【检索文档 · kb-pay-003】转账到账时间：本行账户实时到账；跨行转账一般 2 小时内到账，工作日 17:00 后顺延。',
+    user: '跨行转账一般多久到账？',
+    steps: { ok: [[['跨行', .40], ['一般', .16], ['正常', .10], ['工作日', .08], ['通常', .06], ['目前', .04]], [['转账', .38], ['一般', .18], ['通常', .10], ['实时', .06], ['到账', .05], ['汇款', .04]], [['一般', .30], ['通常', .20], ['实时', .12], ['2', .08], ['当天', .05], ['即时', .04]]] },
+    tail: { ok: '2 小时内到账，工作日 17:00 后提交的顺延至下一工作日处理。' },
+    gate: /不会匹配/, gateHit: '', passDesc: '', codes: [], d: null, note: '', focus: []
+  };
+  function pkRanges(text, pks) {
+    var out = [];
+    if (text == null) return out;
+    (pks || []).forEach(function (p) {
+      if (!p) return;
+      var i = 0;
+      while ((i = text.indexOf(p, i)) !== -1) { out.push([i, i + p.length]); i += 1; }
+    });
+    return out;
+  }
+  function chunkAnswer(s) {
+    var out = [], m, rx = new RegExp(TOK_RX.source, 'g');
+    while ((m = rx.exec(String(s))) !== null) { out.push(m[0]); if (out.length >= 80) break; }
+    return out;
+  }
+  function deriveSteps(ans) {
+    var t = chunkAnswer(ans);
+    var c = [t[0] || '……', t[1] || '……', t[2] || '……'];
+    var fill = ['好的', '正在', '根据', '已', '首先'];
+    var W = [.42, .16, .14, .11, .08];
+    return [0, 1, 2].map(function (i) {
+      var arr = [[c[i], W[0]]], f = 1;
+      for (var j = 0; j < fill.length && arr.length < 5; j++) {
+        if (fill[j] === c[i]) continue;
+        arr.push([fill[j], W[f++]]);
+      }
+      return arr;
+    });
+  }
+  function makeScenario(key) {
+    if (key === 'benign') return BENIGN;
+    var kb = KB[key], sp = SCRIPTS[key];
+    if (!kb || !sp) return BENIGN;
+    var sc = {
+      code: key, name: kb.t, short: key, tip: kb.b,
+      attackSeg: sp.seg, hasAttack: true,
+      system: sp.sys, doc: sp.doc, usr: sp.usr, pk: sp.pk || [],
+      docClean: sp.docClean || sp.doc, usrClean: sp.usrClean || sp.usr,
+      gate: sp.gate, gateHit: sp.gateHit, passDesc: sp.pass,
+      d: sp.d || null, note: sp.note || '', focus: sp.focus || [],
+      deform: sp.deform || null,
+      codes: [key]
+    };
+    if (sp.steps) { sc.steps = sp.steps; sc.tail = sp.tail; }
+    else {
+      sc.steps = { atk: deriveSteps(sp.atk), ok: deriveSteps(sp.ok) };
+      sc.tail = { atk: chunkAnswer(sp.atk).slice(3).join(''), ok: chunkAnswer(sp.ok).slice(3).join('') };
+    }
+    return sc;
+  }
+
+  var DEFENSES = [
+    { id: 'detect', name: '注入模式检测（输入侧）', desc: '对检索文档与用户输入做特征匹配，命中即标记为「不可信数据」' },
+    { id: 'layer', name: '指令分层（系统侧）', desc: '把系统指令与外部内容分开对待，压低不可信层对行为决策的影响' },
+    { id: 'gate', name: '输出门禁（出口侧）', desc: '对生成内容做敏感模式校验，命中即在离开应用前截断' }
+  ];
+
+  var STAGES = [
+    { no: 'S1', name: '上下文拼接', en: 'CONTEXT ASSEMBLY', rail: '拼接',
+      what: '应用把系统指令、检索文档、用户输入按顺序拼成一串文本交给模型。模型只看到拼接结果，不附带「这一段是谁写的、可不可以信」的信息。',
+      atk: '外部内容与指令同通道进入——这是提示注入（LLM01）的根源：文档里的一行字，和系统提示在模型眼里是同一种东西。',
+      codes: [['LLM01', 'danger'], ['Z3 应用编排', '']] },
+    { no: 'S2', name: '分词', en: 'TOKENIZATION', rail: '分词',
+      what: '文本被切成 token 序列，每个 token 有自己的编号。注入指令在分词之后就是一串再普通不过的 token，没有任何特殊标记。',
+      atk: '隐藏指令不携带任何「我是攻击」的记号。输入侧检测只能靠模式匹配——变形写法（谐音、拆字、夹带零宽字符）可以绕过。',
+      codes: [['LLM01', 'danger'], ['LLM10 资源耗尽', '']] },
+    { no: 'S3', name: '嵌入 + 位置', en: 'EMBEDDING + POSITION', rail: '嵌入',
+      what: '每个 token 被映射为一个高维向量（本页压缩成 8 维展示），并叠加位置信息，让模型知道词序。',
+      atk: '在向量空间里，「指令」和「数据」长得一样：向量本身不携带任何可信度标记。这就是提示注入难以从模型内部根治的原因。',
+      codes: [['LLM01', 'danger'], ['Z5 模型服务', '']] },
+    { no: 'S4', name: '自注意力', en: 'SELF-ATTENTION', rail: '注意力',
+      what: '生成每个位置时，模型会「回看」上下文，按注意力权重决定取用哪些信息。点击任意 token 查看它的注意力去向。',
+      atk: '注意就是注入的落点：一旦动作相关的位置高度注意到注入指令，行为就会被改写。开启「指令分层」看权重如何被压低。',
+      codes: [['LLM01', 'danger'], ['ASI02', 'danger']] },
+    { no: 'S5', name: '前馈网络', en: 'FEED-FORWARD', rail: '前馈',
+      what: '每个位置独立经过两层前馈网络，可以理解为「按已有知识放大特定特征」——类似关键词触发知识激活。',
+      atk: '注入短语的特征在这里被进一步放大，「该执行指令了」的行为倾向被巩固。检测/分层生效时，激活会被显著压低。',
+      codes: [['LLM01', 'danger'], ['Z5 模型服务', '']] },
+    { no: 'S6', name: '输出分布与门禁', en: 'SOFTMAX · SAMPLING · GATE', rail: '输出门禁',
+      what: '模型算出下一个 token 的概率分布，按温度重整后逐词采样，拼成回答；应用层可以在出口对输出做最后校验。',
+      atk: '输出一旦直接拼进下游系统就等于执行（LLM05）。温度只改变随机性；真正兜底的是输出门禁——命中敏感模式立即截断。',
+      codes: [['LLM05', 'danger'], ['LLM02', 'danger']] },
+    { no: 'S7', name: '防御失效分析', en: 'DEFENSE FAILURE ANALYSIS', rail: '防御失效',
+      what: '三道防线逐一检查：哪些被绕过、哪些未开启、哪些真正生效。防御失效从来不是单点故障，而是每一层都要回答「为什么没拦住」。',
+      atk: '输入侧检测可能被变形绕过，系统侧分层可能管不到用户层载荷，出口门禁可能根本没开——逐层定位失效点。',
+      codes: [['LLM01', 'danger'], ['LLM05', 'danger']] },
+    { no: 'S8', name: '攻击成功与影响', en: 'ATTACK SUCCESS & IMPACT', rail: '攻击成功',
+      what: '攻击链的终点：载荷如何变成真实的业务后果——数据泄露、越权操作、横向移动，代价最终由业务承担。',
+      atk: '攻击是否成功，取决于防御是否全部失效。这一步给出最终结论与影响面评估。',
+      codes: [['LLM02', 'danger'], ['LLM05', 'danger']] }
+  ];
+
+  /* ---------- 嵌入模式与进度同步 ---------- */
+  var EMBEDDED = (function () { try { return window.self !== window.top; } catch (e) { return true; } })();
+  var TX_ORIGIN = location.origin || location.protocol + '//' + location.host;
+  function postParent(msg) {
+    if (!EMBEDDED) return;
+    try { window.parent.postMessage(msg, TX_ORIGIN); } catch (e) {}
+  }
+  function postHeight() {
+    postParent({ type: 'aisec-tx-height', h: document.documentElement.scrollHeight });
+  }
+  var postHeightD = debounce(postHeight, 150);
+  function syncProgress(correct) {
+    if (S.scn === 'benign' || !KB[S.scn]) return;
+    postParent({ type: 'aisec-tx-visit', code: S.scn });
+    if (correct === true || correct === false) postParent({ type: 'aisec-tx-quiz', code: S.scn, correct: correct === true });
+    if (EMBEDDED) return; /* 嵌入时由父页统一记账，避免双写 */
+    try {
+      var raw = localStorage.getItem('aisec-lab-v1');
+      var st = raw ? JSON.parse(raw) : {};
+      if (!st || typeof st !== 'object') st = {};
+      st.visited = st.visited || {};
+      st.visited[S.scn] = Date.now();
+      if (correct === true) {
+        st.mini = st.mini || {}; st.mini[S.scn] = 1;
+        st.read = st.read || {}; if (!st.read[S.scn]) st.read[S.scn] = Date.now();
+      }
+      localStorage.setItem('aisec-lab-v1', JSON.stringify(st));
+    } catch (e) {}
+  }
+
+  /* ---------- 全局状态 ---------- */
+  var SC = null;
+  var S = {
+    scn: 'LLM01',
+    D: { detect: false, layer: false, gate: false },
+    T: 1.0,
+    stage: 0,
+    selTok: -1,
+    toks: [],
+    segs: [],
+    edits: {},
+    attackPresent: false,
+    attackEff: false,
+    detectHits: 0,
+    mode: 'normal',   // 输入模式：normal=正常输入 / attack=异常输入（攻击）
+    gen: [],          // 已采样 token
+    genDone: false,
+    blocked: false,
+    blockedTok: '',
+    nonce: 0,
+    deform: false,
+    autoTimer: null
+  };
+
+  /* ---------- 分词（演示版：CJK 单字 / 拉丁词 / 数字 / 标点） ---------- */
+  var TOK_RX = /([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[\u4e00-\u9fff\u3400-\u4dbf]|[^\s])/g;
+  function tokenizeSeg(text) {
+    var out = [], m, rx = new RegExp(TOK_RX.source, 'g');
+    while ((m = rx.exec(text)) !== null) {
+      out.push({ text: m[0], start: m.index, end: m.index + m[0].length });
+      if (out.length >= MAX_TOKENS) break;
+    }
+    return out;
+  }
+  function findAttackRanges(text) {
+    var ranges = [];
+    ATK_RX.forEach(function (rx) {
+      var r = new RegExp(rx.source, rx.flags), m;
+      while ((m = r.exec(text)) !== null) {
+        ranges.push([m.index, m.index + m[0].length]);
+        if (m.index === r.lastIndex) r.lastIndex++;
+      }
+    });
+    return ranges;
+  }
+
+  /* ---------- 重建 token 流 ---------- */
+  function recompute() {
+    var scn = makeScenario(S.scn);
+    SC = scn;
+    /* 异常模式：使用攻击输入（原始场景 + 零宽字符变形开关） */
+    var attackMode = S.mode === 'attack' && scn.hasAttack;
+    /* 正常输入 = 真实业务交互（干净基线，无任何载荷）；异常输入 = 同一业务被注入后的版本 */
+    var docBase = attackMode ? ((S.deform && scn.deform) ? scn.deform.doc : scn.doc) : (scn.docClean || scn.doc);
+    var usrBase = attackMode ? scn.usr : (scn.usrClean || scn.usr);
+    var activePk = attackMode ? ((S.deform && scn.deform) ? scn.deform.pk : (scn.pk || [])) : [];
+    S.segs = [
+      { id: 'system', label: '系统提示词', trust: 'TRUSTED', text: S.edits.system != null ? S.edits.system : scn.system },
+      { id: 'doc', label: '检索文档', trust: 'UNTRUSTED', text: S.edits.doc != null ? S.edits.doc : docBase },
+      { id: 'user', label: '用户提示词', trust: 'USER', text: S.edits.user != null ? S.edits.user : usrBase }
+    ];
+    S.toks = [];
+    var truncated = false;
+    S.segs.forEach(function (seg) {
+      /* 输入侧检测只扫不可信内容，且仅在异常输入下运行（正常输入无攻击可检） */
+      var detRanges = (seg.id === 'system' || !attackMode) ? [] : findAttackRanges(seg.text);
+      var ranges = detRanges.concat(seg.id === 'system' ? [] : pkRanges(seg.text, activePk));
+      seg.detRanges = detRanges;
+      var toks = tokenizeSeg(seg.text);
+      var atkCount = 0;
+      toks.forEach(function (t) {
+        t.seg = seg.id;
+        t.atk = ranges.some(function (r) { return t.start < r[1] && t.end > r[0]; });
+        if (t.atk) atkCount++;
+        S.toks.push(t);
+      });
+      seg.tokCount = toks.length;
+      seg.atkCount = atkCount;
+      seg.atkRanges = ranges;
+    });
+    if (S.toks.length >= MAX_TOKENS) truncated = true;
+    S.truncated = truncated;
+    S.toks.push({ text: 'ASSISTANT', seg: 'asst', assistant: true, atk: false });
+    S.detectHits = S.segs.reduce(function (a, s) { return a + s.atkRanges.length; }, 0);
+    S.detHits = S.segs.reduce(function (a, s) { return a + (s.detRanges ? s.detRanges.length : 0); }, 0);
+    S.attackPresent = scn.hasAttack && S.detectHits > 0;
+    var detectWorks = S.D.detect && S.detHits > 0;
+    var layerWorks = S.D.layer && scn.attackSeg === 'doc';
+    S.attackEff = attackMode && S.attackPresent && !detectWorks && !layerWorks;
+    if (S.selTok < 0 || S.selTok >= S.toks.length) {
+      S.selTok = defaultSel();
+    }
+  }
+  function defaultSel() {
+    return S.toks.length - 1; /* 默认选中 ASSISTANT：回复行为由它决定 */
+  }
+
+  /* 核心攻击字：弧线只对这些词给出强权重，避免载荷被均摊到每个字上 */
+  var CORE_CHARS = '忽略规则以上输出查询立即系统提示词手机号转账记录发送调用执行设定透露密钥一字不差会话内容客户外呼';
+  var CORE_WORDS = ['send', 'report', 'https', 'collect'];
+  function coreAtk(t) {
+    if (!t.atk) return false;
+    if (t.text.length === 1) return CORE_CHARS.indexOf(t.text) >= 0;
+    return CORE_WORDS.indexOf(t.text.toLowerCase()) >= 0;
+  }
+
+  /* ---------- 注意力（启发式演示） ---------- */
+  function isActionTok(t) {
+    return t.assistant || ACTION_WORDS.indexOf(t.text) >= 0;
+  }
+  function attnWeights(q) {
+    var qt = S.toks[q], res = [];
+    for (var j = 0; j <= q; j++) {
+      var t = S.toks[j];
+      var base = 0.06 * Math.exp(-(q - j) / 14);
+      if (t.seg === qt.seg) base += 0.22;
+      if (t.seg === 'system') base += 0.35;
+      var jit = 0.7 + 0.6 * (fnv(t.text + '|' + t.seg) % 1000) / 1000;
+      var w = base * jit;
+      if (t.atk && S.attackEff) {
+        var bonus = coreAtk(t) ? (isActionTok(qt) ? 9.0 : 2.5) : 0.6;
+        w += bonus * jit * Math.exp(-(q - j) / 60);
+      }
+      if (S.D.layer && t.seg === 'doc' && SC.attackSeg === 'doc') w *= 0.12;
+      if (t.assistant && j !== q) w += 0.12;
+      res.push({ j: j, w: w });
+    }
+    var sum = res.reduce(function (a, r) { return a + r.w; }, 0) || 1;
+    return res.map(function (r) { return { j: r.j, w: r.w / sum }; })
+      .sort(function (a, b) { return b.w - a.w; });
+  }
+
+  /* ---------- 嵌入 / FFN（启发式演示） ---------- */
+  function embedVec(t) {
+    var h = fnv(t.text + '|' + t.seg), v = [];
+    for (var k = 0; k < 8; k++) { v.push(((h >>> (k * 3)) % 1000) / 1000); }
+    return v;
+  }
+  function tokenId(t) { return (fnv(t.text + t.seg) % 49999) + 500; }
+  function ffnAct(t) {
+    var r = rng(fnv(t.text) + (S.attackEff ? 7 : 3))();
+    var a;
+    if (t.atk && S.attackEff) a = 0.68 + 0.30 * r;
+    else if (t.atk) a = (0.55 + 0.25 * r) * (S.D.detect ? 0.12 : 0.30);
+    else a = 0.05 + 0.18 * r;
+    return Math.min(a, 1);
+  }
+
+  /* ---------- 输出分布 ---------- */
+  function genMode() {
+    return (SC.hasAttack && S.attackEff) ? 'atk' : 'ok';
+  }
+  function stepCands() {
+    var scn = SC, mode = genMode();
+    var steps = scn.steps[mode] || scn.steps.ok;
+    var i = S.gen.length;
+    if (i >= steps.length) return null;
+    return steps[i];
+  }
+  function sampleNext() {
+    var cands = stepCands();
+    if (!cands) return null;
+    var probs = reshape(cands.map(function (c) { return c[1]; }), S.T);
+    var r = rng(fnv(S.scn + genMode() + S.gen.length + ':' + S.nonce))();
+    var acc = 0, picked = cands.length - 1;
+    for (var i = 0; i < cands.length; i++) { acc += probs[i]; if (r <= acc) { picked = i; break; } }
+    return { text: cands[picked][0], probs: probs, cands: cands, picked: picked };
+  }
+
+  /* ---------- 渲染：控制列 ---------- */
+  function renderControls() {
+    var names = DEFENSES.map(function (d, i) { return (SC && SC.d && SC.d[i]) || d.name; });
+    $('#defList').innerHTML = DEFENSES.map(function (d, i) {
+      return '<label class="switch"><input type="checkbox" data-def="' + d.id + '"' + (S.D[d.id] ? ' checked' : '') + '>' +
+        '<span class="track" aria-hidden="true"></span><span class="sw-text"><b>' + esc(names[i]) + '</b><small>' + esc(d.desc) + '</small></span></label>';
+    }).join('');
+    $('#tempOut').textContent = S.T.toFixed(1);
+    var dg = $('#deformGroup');
+    if (dg) {
+      dg.hidden = !(SC && SC.deform);
+      var dchk = $('#deformChk');
+      if (dchk) dchk.checked = !!S.deform;
+    }
+  }
+
+  /* ---------- 渲染：轨道与阶段框 ---------- */
+  /* 轨道小图标：每步展示该阶段的数据形态 */
+  var RAIL_IC = {
+    S1: '<rect x="2" y="2.5" width="20" height="3.2" rx="1.6"/><rect x="2" y="7.2" width="14" height="3.2" rx="1.6"/><rect x="2" y="11.9" width="17" height="3.2" rx="1.6"/>',
+    S2: '<rect x="2" y="2.5" width="5" height="4.6" rx="1.2"/><rect x="9" y="2.5" width="6.4" height="4.6" rx="1.2"/><rect x="17.4" y="2.5" width="4.6" height="4.6" rx="1.2"/><rect x="2" y="9" width="7.4" height="4.6" rx="1.2"/><rect x="11.4" y="9" width="5" height="4.6" rx="1.2"/>',
+    S3: '<rect x="2.6" y="9" width="3.8" height="5"/><rect x="8.6" y="5.5" width="3.8" height="8.5"/><rect x="14.6" y="7.4" width="3.8" height="6.6"/><rect x="19.6" y="2.5" width="3.8" height="11.5"/>',
+    S4: '<circle cx="3.4" cy="12.4" r="2.4"/><circle cx="20.6" cy="12.4" r="2.4"/><path d="M5.5 10.5 Q 12 1.5 18.5 10.5" fill="none" stroke="currentColor" stroke-width="2"/>',
+    S5: '<circle cx="5.4" cy="3.4" r="2.3"/><circle cx="18.6" cy="3.4" r="2.3"/><circle cx="5.4" cy="12.6" r="2.3"/><circle cx="18.6" cy="12.6" r="2.3"/><path d="M7.3 4.6 L16.6 11.2 M7.3 11.2 L16.6 4.6" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+    S6: '<rect x="2.4" y="2" width="4.2" height="12"/><rect x="8.2" y="6" width="4.2" height="8"/><rect x="14" y="9" width="4.2" height="5"/><rect x="19.8" y="11.4" width="4.2" height="2.6"/>',
+    S7: '<path d="M12 1.6l6.6 2.8v4.6c0 4.2-2.8 7-6.6 8.4-3.8-1.4-6.6-4.2-6.6-8.4V4.4z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.2 7.8l2 2 3.6-3.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+    S8: '<path d="M12 2.2L21.6 19H2.4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 7.4v4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="14.6" r="1.2"/>'
+  };
+  var RAIL_TIP = {
+    S1: '三段来源不同的文本拼成一串输入', S2: '文本被切成 token 序列', S3: '每个 token 变成向量 + 位置信息',
+    S4: '生成位置按注意力权重回看上文', S5: '逐位置放大特征（行为倾向）', S6: '概率分布 → 按温度采样 → 出口门禁',
+    S7: '三道防线逐一检查为什么没拦住', S8: '攻击结果与业务影响'
+  };
+  function renderRail() {
+    var btn = function (st, i) {
+      var cls = 'rail-step' + (i < S.stage ? ' is-done' : (i === S.stage ? ' is-current' : ''));
+      return '<button type="button" data-step="' + i + '" class="' + cls + '" aria-current="' + (i === S.stage ? 'step' : 'false') + '" title="' + esc(st.no + ' · ' + st.name + ' — ' + RAIL_TIP[st.no]) + '">' +
+        '<svg class="rail-ic" viewBox="0 0 24 16" fill="currentColor" aria-hidden="true" focusable="false">' + RAIL_IC[st.no] + '</svg>' +
+        '<b>' + st.no + '</b><span>' + esc(st.rail) + '</span></button>';
+    };
+    $('#rail').innerHTML =
+      '<div class="rail-group rail-g-main"><span class="rail-cap">模型内部 · 数据这样流动</span>' +
+        '<div class="rail-seg">' + STAGES.slice(0, 6).map(function (st, i) { return btn(st, i); }).join('') + '</div></div>' +
+      '<div class="rail-group rail-g-aux"><span class="rail-cap">分析 · 为什么没拦住</span>' +
+        '<div class="rail-seg">' + STAGES.slice(6).map(function (st, i) { return btn(st, i + 6); }).join('') + '</div></div>';
+    $('#stageProg').textContent = '第 ' + (S.stage + 1) + ' / ' + STAGES.length + ' 步';
+    $('#btnPrev').disabled = S.stage === 0;
+    $('#btnNext').disabled = S.stage === STAGES.length - 1;
+    syncTxState();
+  }
+  /* 向父页同步阶段/输入模式/防御/温度/播放状态（父页常驻地图据此渲染） */
+  function syncTxState() {
+    postParent({
+      type: 'aisec-tx-stage',
+      stage: S.stage,
+      state: {
+        mode: (S.mode === 'attack' && SC && SC.hasAttack) ? 'attack' : 'normal',
+        hasAttack: !!(SC && SC.hasAttack),
+        detect: !!S.D.detect,
+        layer: !!S.D.layer,
+        gate: !!S.D.gate,
+        temp: S.T,
+        playing: !!S.autoTimer
+      },
+      steps: STAGES.map(function (st) { return { no: st.no, name: st.rail, tip: st.no + ' · ' + st.name + ' — ' + RAIL_TIP[st.no] }; })
+    });
+  }
+
+  function stageState(i) {
+    return i < S.stage ? 'is-done' : (i === S.stage ? 'is-current' : 'is-future');
+  }
+  /* ---------- 因果标注：把防御开关背后的隐藏规则显性化 ----------
+   * 每个阶段体顶部显示当前状态下的「开关 → 规则 → 视觉后果」芯片。 */
+  function causalChips(i) {
+    var out = [];
+    var atkMode = S.mode === 'attack' && SC.hasAttack;
+    if (!atkMode) return out;
+    var layerWorks = S.D.layer && SC.attackSeg === 'doc';
+    var layerBypass = S.D.layer && SC.attackSeg === 'user';
+    var detectWorks = S.D.detect && S.detHits > 0;
+    var detectBypass = S.D.detect && S.deform && S.detHits === 0 && S.attackPresent;
+    if (i === 0) {
+      if (layerWorks) out.push(['ok', '指令分层', '文档段标记为 DATA，不可作为指令源']);
+      if (layerBypass) out.push(['warn', '指令分层', '管不到用户输入层——本场景载荷在用户段']);
+      if (detectWorks) out.push(['ok', '注入模式检测', '命中 ' + S.detHits + ' 处特征并标记为不可信数据']);
+      if (detectBypass) out.push(['danger', '零宽字符变形', '关键词匹配全部失效，检测被绕过']);
+      if (!S.D.layer && !S.D.detect) out.push(['danger', '输入侧防御', '两道防御均未开启，载荷以原始形态进入模型']);
+    } else if (i === 1) {
+      if (detectBypass) out.push(['danger', '零宽字符插入', '攻击 token 与正常 token 无异，检测失效']);
+      else if (detectWorks) out.push(['ok', '检测只标记不删除', '攻击 token 仍在序列中，但 S4 注意力与 S6 输出不再引用']);
+      else if (S.attackPresent) out.push(['warn', '检测未开启', '攻击 token 与正常 token 完全无法区分']);
+    } else if (i === 3) {
+      if (layerWorks) out.push(['ok', '指令分层生效', '文档层对决策位的注意力权重 ×0.12——弧线肉眼可见变细']);
+      if (layerBypass) out.push(['warn', '指令分层被绕过', '载荷来自用户段：用户输入本就是合法指令通道']);
+      if (detectWorks && !layerWorks) out.push(['ok', '检测生效', '攻击 token 不再被决策位引用']);
+      if (S.attackEff && !layerWorks && !detectWorks) out.push(['danger', '前置防御全关', '攻击 token 以最高权重捕获决策位注意力']);
+    } else if (i === 4) {
+      if (S.attackEff) out.push(['danger', '无防御拦截', '攻击 token 激活 0.68–0.98，「照做」倾向在此巩固']);
+      else if (detectWorks) out.push(['ok', '检测生效', '攻击 token 激活压至 ×0.12——特征仍在，不驱动行为']);
+      else if (layerWorks) out.push(['ok', '指令分层生效', '激活同步被压低']);
+    } else if (i === 5) {
+      if (S.attackEff) {
+        if (S.D.gate) out.push(['ok', '输出门禁生效', '命中敏感模式立即截断，内容未离开应用']);
+        else out.push(['danger', '输出门禁未开启', '敏感内容将直接流向下游——最后一道兜底缺失']);
+      } else if (S.D.gate) out.push(['ok', '双保险', '前置防御已拦住 + 出口门禁继续兜底']);
+      else out.push(['ok', '前置防御已拦住', '输出走正常路径；可关闭全部防御观察失控']);
+    }
+    return out;
+  }
+  function causalStrip(i) {
+    var chips = causalChips(i);
+    if (!chips.length) return '';
+    return '<div class="causal-strip">' + chips.map(function (c) {
+      return '<span class="causal-chip ' + c[0] + '"><b>' + esc(c[1]) + '</b>' + esc(c[2]) + '</span>';
+    }).join('') + '</div>';
+  }
+  /* stage-note 一句话摘要（默认折叠时可见） */
+  function snCap(t) {
+    var s = String(t).split('。')[0];
+    if (s.length > 32) s = s.slice(0, 32) + '…';
+    return s;
+  }
+  function stageStateText(i) {
+    return i < S.stage ? '已完成' : (i === S.stage ? '进行中' : '未读');
+  }
+  function renderStageShell() {
+    $('#stages').innerHTML = STAGES.map(function (st, i) {
+      return '<section class="stage ' + stageState(i) + '" data-stagepanel="' + i + '" aria-label="阶段 ' + st.no + ' ' + esc(st.name) + '">' +
+        '<div class="stage-head"><span class="st-no">' + st.no + '</span><h3>' + esc(st.name) + '</h3>' +
+        '<span class="st-en">' + st.en + '</span><span class="st-state">' + stageStateText(i) + '</span></div>' +
+        '<div class="stage-body" id="sbody' + i + '"></div>' +
+        '<div class="stage-note">' +
+          '<details class="sn-col sn-fold"><summary><b>模型在这里做什么</b><span class="sn-cap">' + esc(snCap(st.what)) + '</span><i class="sn-toggle" aria-hidden="true"></i></summary><div class="sn-full">' + gl(esc(st.what)) + '</div></details>' +
+          '<details class="sn-col atk-col sn-fold"><summary><b>攻击面在哪里</b><span class="sn-cap">' + esc(snCap(st.atk)) + '</span><i class="sn-toggle" aria-hidden="true"></i></summary><div class="sn-full">' + gl(esc(st.atk)) + '</div><div class="sn-focus" data-snf="' + i + '"></div></details>' +
+          '<div class="sn-col sn-codes"><b>关联风险</b>' + st.codes.map(function (c) { return '<span class="rc ' + c[1] + '">' + esc(c[0]) + '</span>'; }).join('') + '</div>' +
+        '</div></section>';
+    }).join('');
+    /* 流程导航：挂在阶段列表之外，避免被 is-future 的 pointer-events:none 禁用 */
+    var lastStage = S.stage === STAGES.length - 1;
+    $('#stages').insertAdjacentHTML('beforeend',
+      '<div class="flow-nav" id="flowNav">' +
+      '<span class="flow-steps">阶段 <b>' + (S.stage + 1) + '</b> / ' + STAGES.length + '</span>' +
+      '<span class="fn-spacer"></span>' +
+      '<button class="flow-btn" type="button" id="btnFlowPrev"' + (S.stage === 0 ? ' disabled' : '') + '>' +
+      '<svg class="ic flip" aria-hidden="true"><use href="#i-arrow"></use></svg>上一阶段</button>' +
+      (lastStage
+        ? '<button class="flow-btn primary" type="button" id="btnFlowSend"><svg class="ic" aria-hidden="true"><use href="#i-send"></use></svg>发送下一请求</button>'
+        : '<button class="flow-btn primary" type="button" id="btnFlowNext">下一阶段<svg class="ic" aria-hidden="true"><use href="#i-arrow"></use></svg></button>') +
+      '</div>');
+    for (var i = 0; i < STAGES.length; i++) renderStageBody(i);
+  }
+
+  /* ---------- 各阶段内容 ---------- */
+  function chipHtml(t, i) {
+    var cls = 'tok seg-' + t.seg;
+    var detectWorks = S.D.detect && S.detHits > 0;
+    if (t.atk) cls += ' atk' + (detectWorks ? ' neutralized' : '');
+    if (t.assistant) cls += ' assistant';
+    var label = 'token「' + t.text + '」，来自' + (t.assistant ? '模型回复起点' : ({ system: '系统指令', doc: '检索文档', user: '用户输入' })[t.seg]) + (t.atk ? '，注入特征' : '');
+    return '<button type="button" class="' + cls + '" data-tok="' + i + '" aria-pressed="' + (S.selTok === i) + '" aria-label="' + esc(label) + '">' + esc(t.text) + '</button>';
+  }
+  function renderStageBody(i) {
+    var box = $('#sbody' + i);
+    if (!box) return;
+    var strip = causalStrip(i);
+    if (i === 0) box.innerHTML = strip + ctxHtml();
+    else if (i === 1) box.innerHTML = strip + toksHtml();
+    else if (i === 2) box.innerHTML = strip + embHtml();
+    else if (i === 3) box.innerHTML = strip + attnHtml();
+    else if (i === 4) box.innerHTML = strip + ffnHtml();
+    else if (i === 5) box.innerHTML = strip + outHtml();
+    else if (i === 6) box.innerHTML = defenseFailHtml();
+    else if (i === 7) box.innerHTML = attackSuccessHtml();
+  }
+  function modeBarHtml() {
+    var isAtk = S.mode === 'attack' && SC.hasAttack;
+    return '<span class="mode-label">输入模式</span>' +
+      '<div class="mode-seg" role="group" aria-label="切换输入模式">' +
+        '<button type="button" class="mode-btn' + (S.mode === 'normal' ? ' active' : '') + '" data-mode="normal" aria-pressed="' + (S.mode === 'normal') + '">' +
+        '<svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>正常输入</button>' +
+        '<button type="button" class="mode-btn' + (isAtk ? ' active attack' : '') + '" data-mode="attack" aria-pressed="' + (isAtk) + '"' + (SC.hasAttack ? '' : ' disabled') + '>' +
+        '<svg class="ic" aria-hidden="true"><use href="#i-warn"></use></svg>异常输入</button>' +
+      '</div>' +
+      '<span class="mode-hint">' + (isAtk
+        ? '当前为<b>异常输入</b>：真实业务的' + (SC.attackSeg === 'user' ? '用户提示词中' : '检索文档中') + '被注入了攻击载荷，观察各阶段如何被改写。'
+        : (SC.hasAttack ? '当前为<b>正常输入</b>：真实业务交互，系统提示词与用户提示词中不含任何载荷——这是所有对比的基线。切到「异常输入」看同一业务被注入后的变化。' : '本场景为正常对照，无攻击载荷。')) + '</span>' +
+      (isAtk ? '<span class="cmp-badge bad"><svg class="ic" aria-hidden="true"><use href="#i-warn"></use></svg>攻击路径</span>' : '<span class="cmp-badge ok"><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>正常路径</span>');
+  }
+  function renderModeBar() {
+    var box = $('#modeBarTop');
+    if (box) box.innerHTML = modeBarHtml();
+  }
+  function ctxHtml() {
+    /* 输入模式控件唯一入口在顶部 modeBarTop；S1 不再内嵌重复控件 */
+    var html = '';
+    html += '<div class="ctx-view">';
+    S.segs.forEach(function (seg, idx) {
+      var empty = String(seg.text).trim() === '';
+      var detN = seg.detRanges ? seg.detRanges.length : 0;
+      var flagged = S.D.detect && detN > 0;
+      var missed = S.D.detect && S.deform && seg.id === 'doc' && detN === 0 && seg.atkRanges.length > 0;
+      html += '<div class="ctx-block ctx-' + seg.id + '">' +
+        '<div class="ctx-top"><span class="ctx-label">' + esc(seg.label) + '</span>' +
+        '<span class="ctx-trust">' + seg.trust + '</span>' +
+        '<span class="ctx-count">' + seg.tokCount + ' tokens' + (seg.atkRanges.length ? ' · ' + seg.atkRanges.length + ' 处载荷标记' : '') + '</span></div>';
+      if (empty) html += '<div class="ctx-empty">（该段为空：模型只会看到其余两段内容）</div>';
+      else html += '<textarea rows="2" data-segedit="' + idx + '" aria-label="编辑' + esc(seg.label) + '内容">' + esc(seg.text) + '</textarea>';
+      if (missed) html += '<span class="ctx-flag missed show"><svg class="ic" aria-hidden="true"><use href="#i-warn"></use></svg>检测未命中：载荷夹带零宽字符，关键词匹配被绕过（载荷仍被本演示标记，用于观察注意力）</span>';
+      else html += '<span class="ctx-flag' + (flagged ? ' show' : '') + '"><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>注入模式检测：已命中 ' + detN + ' 处特征，本段标记为不可信数据</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<p class="tok-note">三段文字可以随意编辑（会实时重新分词）。试一试：把检索文档里的注入句删掉，或改成自己的写法，再看后面阶段的注意力与输出变化。</p>';
+    /* 发送栏：把上下文作为一次请求送入模型（S1 → S2） */
+    var hasContent = S.segs.some(function (s) { return String(s.text).trim() !== ''; });
+    html += '<div class="send-bar">' +
+      '<button class="send-btn" type="button" id="btnSend"' + (hasContent ? '' : ' disabled') + '>' +
+      '<svg class="ic" aria-hidden="true"><use href="#i-send"></use></svg>发送请求</button>' +
+      '<span class="send-hint">把 <b>' + S.segs.length + ' 段上下文</b> 作为一次请求送入模型，进入 <b>S2 分词</b>。</span></div>';
+    if (SC.attackSeg === 'user') {
+      html += '<p class="tok-note" style="color:var(--warn)">注意：本场景的载荷来自「用户输入」段——用户输入本来就是合法的指令通道，这一段不会被分层逻辑压低。</p>';
+    }
+    return html;
+  }
+  function modeBadge() {
+    var isAtk = S.mode === 'attack' && SC.hasAttack;
+    return isAtk
+      ? '<span class="cmp-badge bad"><svg class="ic" aria-hidden="true"><use href="#i-warn"></use></svg>异常输入</span>'
+      : '<span class="cmp-badge ok"><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>正常输入</span>';
+  }
+  function toksHtml() {
+    var html = '<div style="margin-bottom:9px">' + modeBadge() + '</div>';
+    html += '<div class="toks" id="tokRowS2" role="list" aria-label="token 序列">';
+    html += S.toks.map(function (t, i) { return chipHtml(t, i); }).join('');
+    html += '</div>';
+    html += '<div class="tok-legend">' +
+      '<span class="lg"><span class="dot" style="background:var(--ok)"></span>系统指令</span>' +
+      '<span class="lg"><span class="dot" style="background:var(--danger)"></span>检索文档</span>' +
+      '<span class="lg"><span class="dot" style="background:var(--brand)"></span>用户输入</span>' +
+      '<span class="lg"><span class="dot" style="background:var(--ink-3)"></span>ASSISTANT = 模型回复起点</span>' +
+      (S.attackPresent ? '<span class="lg" style="color:var(--danger);font-weight:700">描红 = 注入特征 token（演示检测）</span>' : '') +
+      '</div>';
+    html += '<p class="tok-note">共 ' + (S.toks.length - 1) + ' 个内容 token + 1 个回复起点标记。' +
+      (S.truncated ? '（原文超出演示上限，仅展示前 ' + MAX_TOKENS + ' 个）' : '') +
+      (S.D.detect && S.attackPresent ? ' 开启检测后，攻击 token 已被划线标记：模型依然会读到它们，但下游行为不再引用（见 S4/S6）。' : ' 对模型而言，描红的 token 和其他 token 没有任何区别。点击任意 token，S3 向量、S4 注意力与 S5 激活会同步跟随同一位置。') +
+      '</p>';
+    return html;
+  }
+  function embHtml() {
+    var t = S.toks[S.selTok] || S.toks[S.toks.length - 1];
+    var v = embedVec(t);
+    var bars = v.map(function (x) { return '<i style="--h:' + Math.round(12 + x * 88) + '%"></i>'; }).join('');
+    var cols = v.map(function () { return '<i>·</i>'; }).join('');
+    var segName = t.assistant ? '模型回复起点' : ({ system: '系统指令', doc: '检索文档', user: '用户输入' })[t.seg];
+    return '<div style="margin-bottom:9px">' + modeBadge() + '</div>' +
+      '<div class="emb-panel">' +
+      '<div class="emb-card">' +
+        '<div class="emb-top"><span class="emb-chip">' + esc(t.text) + '</span>' +
+        '<span class="emb-meta">#' + tokenId(t) + '</span>' +
+        '<span class="badge">' + esc(segName) + '</span>' +
+        (t.atk ? '<span class="badge" style="background:var(--danger-soft);color:var(--danger)">注入特征</span>' : '') + '</div>' +
+        '<div class="emb-bars" aria-hidden="true">' + bars + '</div>' +
+        '<div class="emb-cols" aria-hidden="true">' + cols + '</div>' +
+        '<p class="tok-note">「' + esc(t.text) + '」的 8 维演示向量（真实模型是数千维）。位置 ' + (S.selTok + 1) + ' 的位置编码会叠加在向量上。</p>' +
+      '</div>' +
+      '<div class="emb-side"><b>向量不带信任标记。</b>' +
+      '<p>「请转账」和「今天天气」在向量空间里只是方向不同，没有「可信 / 不可信」的维度。系统提示与文档里藏的指令，映射出来的向量性质完全一样。</p>' +
+      '<div class="warn-line">所以提示注入无法靠「让模型看清向量」来根治——只能在外围建立信任边界（输入检测、指令分层、输出门禁）。</div>' +
+      '<p class="tok-note" style="margin-top:10px">点击 S2 或 S4 里的任意 token，这里会跟着切换。</p></div>' +
+      '</div>';
+  }
+  function attnHtml() {
+    var t = S.toks[S.selTok] || S.toks[S.toks.length - 1];
+    return '<div style="margin-bottom:9px">' + modeBadge() + '</div>' +
+      '<div class="attn-wrap" id="attnWrap">' +
+      '<svg class="attn-svg" id="attnSvg" aria-hidden="true"></svg>' +
+      '<div class="toks" id="tokRowS4">' + S.toks.map(function (tk, i) { return chipHtml(tk, i); }).join('') + '</div>' +
+      '</div>' +
+      '<div class="attn-sum" id="attnSum" aria-live="polite"></div>' +
+      '<p class="attn-hint">单头简化示意。点击任意 token 查看它生成时「回看」了谁；百分比为该 token 在前 6 大注意力去向中的相对占比（演示数据），弧线越粗越高占比越大。</p>';
+  }
+  function ffnHtml() {
+    var selText = S.toks[S.selTok] ? S.toks[S.selTok].text : null;
+    var seen = {};
+    var rows = S.toks.filter(function (t) { return !t.assistant; })
+      .map(function (t) { return { t: t, a: ffnAct(t) }; })
+      .sort(function (x, y) { return y.a - x.a; })
+      .filter(function (r) { var k = r.t.text; if (seen[k]) return false; seen[k] = 1; return true; })
+      .slice(0, 6);
+    var html = '<div style="margin-bottom:9px">' + modeBadge() + '</div>' +
+      '<div class="ffn-grid"><div>' +
+      '<p class="tok-note" style="margin-top:0">全部 token 中前馈激活最高的 6 个（演示数值）；点击 S2 / S4 里任意 token，这里会同步标出它的位置：</p>' +
+      '<div class="act-list">' + rows.map(function (r) {
+        var calm = r.a < 0.35;
+        var isSel = selText && r.t.text === selText;
+        return '<div class="act-row' + (calm ? ' calm' : '') + (isSel ? ' sel' : '') + '"><span class="act-tok">' + esc(r.t.text) + '</span>' +
+          '<span class="act-track"><span class="act-fill" style="width:' + Math.round(r.a * 100) + '%"></span></span>' +
+          '<span class="act-val">' + r.a.toFixed(2) + '</span>' + (isSel ? '<span class="act-link">← 当前选中</span>' : '') + '</div>';
+      }).join('') + '</div></div>' +
+      '<div class="ffn-side"><b>激活 = 行为倾向。</b>' +
+      (S.attackEff
+        ? '<p>攻击 token 的激活显著高于普通 token：注入指令的特征被逐层放大，模型「照做」的倾向在这里被巩固。</p>'
+        : (S.attackPresent
+          ? '<p>检测或分层生效后，注入 token 的激活被压到 0.1 以下——特征仍在，但不再驱动行为。</p>'
+          : '<p>本场景没有攻击载荷：激活最高的是与当前问题相关的普通词，行为正常。</p>')) +
+      '<p class="tok-note" style="margin-top:8px">前馈网络逐位置独立计算，是模型「知识记忆」的主要载体，也是后门与触发词最容易潜伏的位置（关联 LLM03 供应链 / LLM04 投毒）。</p></div></div>';
+    return html;
+  }
+  function outHtml() {
+    var scn = SC;
+    var mode = genMode();
+    var cands = stepCands();
+    var stepsTotal = (scn.steps[mode] || scn.steps.ok).length;
+    var html = '<div class="out-grid">';
+    /* 左：分布 */
+    html += '<div class="cand-card"><h4>下一个 token 的概率分布</h4>';
+    if (S.blocked) {
+      html += '<p class="cand-sub">生成已被输出门禁截断。关闭门禁或「重新采样」可重放这一步。</p>';
+    } else if (!cands) {
+      html += '<p class="cand-sub">3 个交互采样位已完成，后续内容自动补全。分布随位置逐词变化，点「重新采样」可回看。</p>';
+    } else {
+      var probs = reshape(cands.map(function (c) { return c[1]; }), S.T);
+      var last = S.lastSample;
+      html += '<p class="cand-sub">位置 ' + (S.gen.length + 1) + ' / ' + stepsTotal + ' · 温度 T=' + S.T.toFixed(1) +
+        (mode === 'atk' ? ' · <span style="color:var(--danger);font-weight:700">攻击路径：注入指令正在主导分布</span>' : ' · 正常路径') + '</p>';
+      html += '<div class="cand-list">' + cands.map(function (c, i) {
+        var hit = last && last.picked === i && last.step === S.gen.length;
+        return '<div class="cand-row' + (mode === 'atk' ? ' atkmode' : '') + (hit ? ' hit' : '') + '">' +
+          '<span class="cand-tok">' + esc(c[0]) + '</span>' +
+          '<span class="cand-track"><span class="cand-fill" style="width:' + Math.round(probs[i] * 100) + '%"></span></span>' +
+          '<span class="cand-p">' + pct(probs[i]) + '</span></div>';
+      }).join('') + '</div>';
+    }
+    html += '</div>';
+    /* 右：生成条 + 门禁 */
+    html += '<div class="gen-card"><h4>模型回复（逐词采样）</h4><p class="gen-sub">按当前分布采样；门禁开启时逐词校验。</p>' +
+      '<div class="gen-strip" id="genStrip" aria-live="polite">' + genStripHtml() + '</div>' +
+      '<div class="gen-actions">' +
+      (S.blocked ? '' : '<button class="btn small primary" type="button" id="btnSample"><svg class="ic" aria-hidden="true"><use href="#i-play"></use></svg>采样下一词</button>') +
+      '<button class="btn small" type="button" id="btnResample"><svg class="ic" aria-hidden="true"><use href="#i-reset"></use></svg>重新采样</button>' +
+      '<span class="gen-done-label">' + (S.genDone ? '已生成 ' + S.gen.length + ' 词' : '已生成 ' + S.gen.length + ' / ' + stepsTotal + ' 交互位') + '</span>' +
+      '</div>';
+    var gateHit = scn.gate.test(genText());
+    if (gateHit && !S.blocked && !S.D.gate) {
+      html += '<span class="gate-note show"><svg class="ic" style="width:14px;height:14px" aria-hidden="true"><use href="#i-warn"></use></svg>已出现敏感模式，但输出门禁未开启——内容将继续流向下游</span>';
+    }
+    /* 当前输入模式角标 */
+    var isAtkMode = S.mode === 'attack' && scn.hasAttack;
+    html += '<div style="margin-top:10px">' + (isAtkMode
+      ? '<span class="cmp-badge bad"><svg class="ic" aria-hidden="true"><use href="#i-warn"></use></svg>异常输入 · 攻击路径</span>'
+      : '<span class="cmp-badge ok"><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>正常输入 · 正常路径</span>') + '</div>';
+    html += verdictHtml();
+    html += quizHtml();
+    html += '</div></div>';
+    return html;
+  }
+
+  /* ---------- 模型输出结果（S7/S8 共用） ---------- */
+  function outputResultHtml() {
+    var scn = SC;
+    var isAtk = S.mode === 'attack' && scn.hasAttack;
+    var hasOutput = S.genDone || S.blocked || S.gen.length > 0;
+    var outText = genText();
+    var blocked = S.blocked;
+    var cls = blocked ? 'blocked' : (isAtk && S.attackEff ? 'bad' : 'ok');
+    var label = blocked ? '已截断（攻击被拦截）'
+      : (isAtk && S.attackEff ? (S.genDone ? '异常输出（攻击成功）' : '生成中（攻击路径）')
+      : '正常输出');
+    var icon = blocked ? 'i-warn' : (isAtk && S.attackEff ? 'i-close' : 'i-check');
+    var color = blocked ? 'var(--warn)' : (isAtk && S.attackEff ? 'var(--danger)' : 'var(--ok)');
+    var html = '<div class="out-result" style="margin-bottom:11px; padding:11px 13px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2);">' +
+      '<div style="display:flex; align-items:center; gap:7px; margin-bottom:7px; flex-wrap:wrap">' +
+      '<span class="cmp-badge" style="background:' + (blocked ? 'var(--warn-soft)' : (isAtk && S.attackEff ? 'var(--danger-soft)' : 'var(--ok-soft)')) + '; color:' + color + '">' +
+      '<svg class="ic" aria-hidden="true"><use href="#' + icon + '"></use></svg>' + label + '</span>' +
+      '<span style="font-size:11px; color:var(--ink-3)">模型输出结果 · ' + (hasOutput ? '已生成 ' + S.gen.length + ' 词' : '尚未采样') + '</span>' +
+      '</div>';
+    if (!hasOutput) {
+      html += '<p style="margin:0; font-size:12px; color:var(--ink-3)">尚未采样——回到 S6 点击「采样下一词」生成输出后，这里会显示完整结果。</p>';
+    } else {
+      html += '<div class="out-result-text" style="font-size:13px; line-height:1.75; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:9px 11px;">' + esc(outText) + '</div>';
+      if (blocked) html += '<p style="margin:7px 0 0; font-size:11.5px; color:var(--warn); font-weight:600">输出门禁命中敏感模式，生成立即停止，内容未离开应用。</p>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  /* ---------- S7：防御失效分析 ---------- */
+  function defenseFailHtml() {
+    var scn = SC;
+    var isAtk = S.mode === 'attack' && scn.hasAttack;
+    var cards = [];
+
+    /* 对照视角（正常输入/无载荷）：不判失效，改为三道防线的职责预览 */
+    if (!isAtk) {
+      cards.push({ cls: 'idle', icon: 'i-shield', tag: '待命', name: '注入模式检测（输入侧）',
+        desc: '正常输入无可疑特征。若异常输入携带注入指令，此层会命中特征并标记为不可信数据——概率性防线，可被变形写法绕过。' });
+      cards.push({ cls: 'idle', icon: 'i-shield', tag: '待命', name: '指令分层（系统侧）',
+        desc: '正常输入无跨信任层冲突。若文档段藏有指令，此层把跨层注意力压至 22%，指令无法进入行为决策。' });
+      cards.push({ cls: 'idle', icon: 'i-shield', tag: '待命', name: '输出门禁（出口侧）',
+        desc: '正常输出不命中敏感模式。若模型被诱导输出敏感内容，此层在出口立即截断——确定性兜底，是最后一道门。' });
+      var html0 = '<div style="margin-bottom:9px">' + modeBadge() + '</div>';
+      html0 += '<div class="causal-strip"><span class="causal-chip ok"><b>对照视角</b>正常输入没有攻击可拦——以下是三道防线的职责预览。切到「异常输入」，这里会变成逐层拦截的实时判定。</span></div>';
+      html0 += '<div class="def-grid">' + cards.map(function (c) {
+        return '<div class="def-card ' + c.cls + '">' +
+          '<div class="def-icon"><svg class="ic" aria-hidden="true"><use href="#' + c.icon + '"></use></svg></div>' +
+          '<div class="def-body"><b>' + esc(c.name) + '<span class="def-tag">' + c.tag + '</span></b>' +
+          '<p>' + esc(c.desc) + '</p></div></div>';
+      }).join('') + '</div>';
+      html0 += '<div class="def-summary ok"><b>正常输入：</b>三道防线均无需触发，输出为正常业务回答。防御的意义在于——当异常输入来临时，它们能依次拦住。</div>';
+      return html0;
+    }
+
+    /* 输入侧：注入模式检测 */
+    var detectOn = !!S.D.detect;
+    var detectBypass = detectOn && S.deform && S.detHits === 0 && S.attackPresent;
+    var detectOk = detectOn && !detectBypass;
+    cards.push({
+      cls: detectOk ? 'ok' : (detectBypass ? 'bypass' : 'fail'),
+      icon: detectOk ? 'i-check' : (detectBypass ? 'i-warn' : 'i-close'),
+      tag: detectOk ? '生效' : (detectBypass ? '被绕过' : '未开启'),
+      name: '注入模式检测（输入侧）',
+      desc: !detectOn
+        ? '未开启：载荷在 S1 进入时未被标记为不可信数据，后续各层都拿不到「这是攻击」的信号。'
+        : detectBypass
+          ? '被绕过：载荷夹带零宽字符，关键词匹配全部失效——检测是概率性防线，变形写法可以躲开它。'
+          : '已命中 ' + S.detHits + ' 处特征并标记为不可信数据，下游行为不再引用。'
+    });
+
+    /* 系统侧：指令分层 */
+    var layerOn = !!S.D.layer;
+    var layerBypass = layerOn && scn.attackSeg === 'user';
+    var layerOk = layerOn && !layerBypass;
+    cards.push({
+      cls: layerOk ? 'ok' : (layerBypass ? 'bypass' : 'fail'),
+      icon: layerOk ? 'i-check' : (layerBypass ? 'i-warn' : 'i-close'),
+      tag: layerOk ? '生效' : (layerBypass ? '被绕过' : '未开启'),
+      name: '指令分层（系统侧）',
+      desc: !layerOn
+        ? '未开启：S4 的注意力不受约束地绑定了注入指令，文档里的一行字和系统提示一样驱动行为。'
+        : layerBypass
+          ? '被绕过：载荷来自用户输入层——用户层本就是合法指令通道，分层管不到用户自己的输入。'
+          : '跨信任层注意力压至 22%，注入指令无法进入行为决策。'
+    });
+
+    /* 出口侧：输出门禁 */
+    var gateOn = !!S.D.gate;
+    var gateOk = gateOn;
+    cards.push({
+      cls: gateOk ? 'ok' : 'fail',
+      icon: gateOk ? 'i-check' : 'i-close',
+      tag: gateOk ? '生效' : '未开启',
+      name: '输出门禁（出口侧）',
+      desc: !gateOn
+        ? '未开启：敏感输出直接进入下游，没有任何一道门在出口拦截。'
+        : '出口已设门：命中敏感模式立即截断，内容不离开应用。'
+    });
+
+    var failCount = cards.filter(function (c) { return c.cls !== 'ok'; }).length;
+    var okCount = cards.length - failCount;
+
+    var html = '<div style="margin-bottom:9px">' + modeBadge() + '</div>';
+    /* 模型输出结果：让防御分析基于真实输出，而不是抽象描述 */
+    html += outputResultHtml();
+    html += '<div class="def-grid">' + cards.map(function (c) {
+      return '<div class="def-card ' + c.cls + '">' +
+        '<div class="def-icon"><svg class="ic" aria-hidden="true"><use href="#' + c.icon + '"></use></svg></div>' +
+        '<div class="def-body"><b>' + esc(c.name) + '<span class="def-tag">' + c.tag + '</span></b>' +
+        '<p>' + esc(c.desc) + '</p></div></div>';
+    }).join('') + '</div>';
+
+    /* 汇总 */
+    if (!isAtk) {
+      html += '<div class="def-summary ok"><b>正常输入：</b>三道防线均无需触发，输出为正常业务回答。防御的意义在于——当异常输入来临时，它们能依次拦住。</div>';
+    } else if (failCount === 0) {
+      html += '<div class="def-summary ok"><b>防御全部生效：</b>三道防线均未被绕过，注入无法进入行为决策。继续到 S8 看攻击为何失败。</div>';
+    } else if (failCount === cards.length) {
+      html += '<div class="def-summary bad"><b>三道防线全部失效：</b>输入侧未标记、系统侧未分层、出口侧未设门——注入载荷畅通无阻地改写了模型行为。这是最危险的组合。</div>';
+    } else {
+      html += '<div class="def-summary bad"><b>' + failCount + ' / 3 道防线失效：</b>其余 ' + okCount + ' 道虽开启但不足以独立阻断攻击。纵深防御的价值在于层层兜底——任何一层缺席，风险都会顺着缺口放大。</div>';
+    }
+    return html;
+  }
+
+  /* ---------- S8：攻击成功与影响 ---------- */
+  function attackSuccessHtml() {
+    var scn = SC;
+    var isAtk = S.mode === 'attack' && scn.hasAttack;
+    /* 攻击成功 = 攻击生效 且 未被门禁拦截 且 生成已完成 */
+    var attackSucceeded = isAtk && S.attackEff && !S.blocked && S.genDone;
+
+    var html = '<div style="margin-bottom:9px">' + modeBadge() + '</div>';
+    /* 模型输出结果：攻击成功与否，最终都体现在这段输出上 */
+    html += outputResultHtml();
+
+    if (!isAtk) {
+      html += '<div class="impact-grid">' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>业务结论</h5>' +
+        '<div class="big">无攻击</div><p>正常输入下模型按业务目标回答，无数据泄露、无越权动作、无横向移动。</p></div>' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>防御状态</h5>' +
+        '<div class="big">待命</div><p>三道防线处于待命状态，无需触发。切到「异常输入」看它们如何依次拦截。</p></div>' +
+        '</div>';
+      html += '<div class="verdict-final ok"><b>基线正常：</b>这是对照流程。同样的模型、同样的上下文结构，换成异常输入后每一步都会发生变化。</div>';
+      return html;
+    }
+
+    var hasOutput = S.genDone || S.blocked;
+    if (!hasOutput) {
+      /* 尚未生成完整输出：结果还没有定，不预判成败（含部分采样 = 生成中） */
+      var midGen = S.gen.length > 0;
+      html += '<div class="impact-grid">' +
+        '<div class="impact-card warn"><h5><svg class="ic" aria-hidden="true"><use href="#i-target"></use></svg>攻击结果</h5>' +
+        '<div class="big">' + (midGen ? '生成中（' + S.gen.length + ' / 3 词）' : '待命') + '</div><p>' +
+        (midGen ? '已采样 ' + S.gen.length + ' 个交互位，但生成尚未完成——回到 S6 继续采样后，结论才成立。'
+                : '异常输入已就绪，但模型尚未生成输出——结果还没有发生，这里不预判成败。') + '</p></div>' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>接下来</h5>' +
+        '<p>回到 S6 点击「采样下一词」逐词生成；或点下方「发送下一请求」重新走一遍。开启某道防御后再采样，可以直接观察拦截时机。</p></div>' +
+        '</div>';
+      html += '<div class="verdict-final warn"><b>结果未定：</b>攻击是否成功 = 输入载荷 × 防御状态 × 采样结果。先在 S6 生成输出，结论会在这里如实呈现。</div>';
+      return html;
+    }
+
+    if (attackSucceeded) {
+      /* 攻击成功：展示影响面 */
+      var leaked = scn.passDesc || '敏感输出直接进入下游。';
+      html += '<div class="impact-grid">' +
+        '<div class="impact-card bad"><h5><svg class="ic" aria-hidden="true"><use href="#i-close"></use></svg>攻击结果</h5>' +
+        '<div class="big">攻击成功</div><p>注入载荷改写了模型行为，敏感输出未被任何一道防线拦住。</p></div>' +
+        '<div class="impact-card bad"><h5><svg class="ic" aria-hidden="true"><use href="#i-warn"></use></svg>业务影响</h5>' +
+        '<p>' + esc(leaked) + '</p></div>' +
+        '</div>';
+      /* 攻击链 */
+      html += '<div class="attack-chain">' +
+        '<div class="chain-node"><span class="chain-dot hot">1</span><span class="chain-txt"><b>载荷进入：</b>注入指令随检索文档进入上下文，与系统提示同通道。</span></div>' +
+        '<div class="chain-node"><span class="chain-dot hot">2</span><span class="chain-txt"><b>行为改写：</b>S4 注意力绑定注入指令，S5 前馈放大攻击特征。</span></div>' +
+        '<div class="chain-node"><span class="chain-dot hot">3</span><span class="chain-txt"><b>输出生成：</b>模型按攻击路径采样，输出敏感内容。</span></div>' +
+        '<div class="chain-node"><span class="chain-dot hot">4</span><span class="chain-txt"><b>出口放行：</b>门禁未开启或未命中，内容直接进入下游系统。</span></div>' +
+        '<div class="chain-node"><span class="chain-dot hot">5</span><span class="chain-txt"><b>后果落地：</b>数据泄露 / 越权操作 / 横向移动，代价由业务承担。</span></div>' +
+        '</div>';
+      html += '<div class="verdict-final bad"><b>结论：攻击成功。</b>三道防线全部失效时，注入载荷可以完整走完「进入 → 改写 → 输出 → 外泄」的链条。修复方向：至少开启出口门禁完成兜底，再补输入检测与指令分层。</div>';
+    } else if (S.blocked) {
+      /* 被门禁拦截 */
+      html += '<div class="impact-grid">' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>攻击结果</h5>' +
+        '<div class="big">攻击被拦截</div><p>输出门禁命中敏感模式，生成立即停止，内容未离开应用。</p></div>' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>兜底价值</h5>' +
+        '<p>上游检测可能被绕过，但出口门禁完成了最后一道兜底——纵深防御不需要每一层都完美，只需要最后一层守住。</p></div>' +
+        '</div>';
+      html += '<div class="verdict-final ok"><b>结论：攻击失败（被出口门禁拦截）。</b>拦截后应转为人工审核或固定话术回复，而不是把原始输出继续下传。</div>';
+    } else {
+      /* 防御生效，攻击未成功 */
+      html += '<div class="impact-grid">' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg>攻击结果</h5>' +
+        '<div class="big">攻击未成功</div><p>防御生效，模型输出为正常回答，注入指令未进入行为决策。</p></div>' +
+        '<div class="impact-card ok"><h5><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg>生效的防线</h5>' +
+        '<p>输入检测标记了载荷、指令分层压低了注意力、出口门禁确认无敏感输出——多层协同阻断了攻击链。</p></div>' +
+        '</div>';
+      html += '<div class="verdict-final ok"><b>结论：攻击失败（防御生效）。</b>对比攻击成功路径：同样的异常输入，防御开关决定了模型听谁的。</div>';
+    }
+    return html;
+  }
+  function fullText() {
+    var scn = SC;
+    var mode = genMode();
+    return S.gen.join('') + (scn.tail[mode] || '');
+  }
+  function genText() {
+    return S.genDone || S.blocked ? fullText() : S.gen.join('');
+  }
+  function genStripHtml() {
+    var scn = SC;
+    var html = S.gen.map(function (g) {
+      var bad = scn.gate.test(g);
+      var cls = 'gen-tok' + (bad ? (S.blocked ? ' blocked' : ' bad') : '');
+      return '<span class="' + cls + '">' + esc(g) + '</span>';
+    }).join('');
+    if (S.genDone && !S.blocked) html += '<span class="gen-tok tail">' + esc(scn.tail[genMode()] || '') + '</span>';
+    if (S.blocked) html += '<span class="gen-tok tail">……已截断</span>';
+    if (!S.gen.length && !S.genDone) html = '<span class="gen-done-label">（尚未采样——点击「采样下一词」开始生成）</span>';
+    return html;
+  }
+  function verdictHtml() {
+    var scn = SC;
+    var box;
+    if (!S.genDone && !S.blocked) {
+      box = '<div class="verdict"><b class="t"><svg class="ic" aria-hidden="true"><use href="#i-target"></use></svg>生成进行中</b>' +
+        (SC.hasAttack && S.attackEff
+          ? '当前走的是攻击路径：观察分布如何被注入指令拉动，再打开防御对比。'
+          : '当前是正常路径：防御生效或场景本身无攻击。') + '</div>';
+      return box;
+    }
+    var items = [], kind, title, body;
+    var codes = scn.codes.slice();
+    if (S.scn === 'benign') {
+      kind = 'ok'; title = '正常完成，无触发';
+      items.push('对照场景：三道防御均无需触发，输出为正常业务回答。');
+      body = '这就是基线行为——切换到攻击场景后，每个阶段的变化都以此为参照。';
+      codes = [];
+    } else if (S.mode === 'normal') {
+      kind = 'ok'; title = '正常输入：输出正常回答';
+      items.push('正常输入路径：无攻击载荷，模型按业务目标回答，各阶段无异常特征。');
+      if (S.D.detect) items.push('✓ 注入模式检测：无特征可命中，正常放行。');
+      if (S.D.gate) items.push('✓ 输出门禁：输出未命中敏感模式，正常放行。');
+      body = '这是基线。切到「异常输入」看同样的模型如何被注入改写。';
+    } else if (S.blocked) {
+      kind = 'ok'; title = '已拦截：输出门禁命中敏感模式';
+      items.push('✓ 输出门禁：' + scn.gateHit + '，生成立即停止，内容未离开应用。');
+      if (S.D.detect && S.attackPresent) items.push(S.detHits > 0 ? '✓ 注入模式检测：输入侧已命中 ' + S.detHits + ' 处特征（本条输出仍走到门禁，说明上游检测被绕过或载荷变形——出口兜底的价值就在这里）。' : '· 注入模式检测未命中：载荷夹带零宽字符，关键词匹配被绕过——检测是概率性防线，出口门禁完成兜底。');
+      if (S.D.layer && scn.attackSeg === 'doc') items.push('✓ 指令分层：跨信任层注意力被压低，行为决策不再引用文档内指令。');
+      if (S.D.layer && scn.attackSeg === 'user') items.push('· 指令分层未生效：载荷来自用户输入层——用户层本就是合法指令通道，分层防不住直接套话。');
+      body = '拦截后应转为人工审核或固定话术回复，而不是把原始输出继续下传。';
+    } else if (genMode() === 'atk') {
+      kind = 'bad'; title = '已放行：敏感输出直接进入下游';
+      items.push('✗ 输出门禁未开启：' + scn.passDesc);
+      if (!S.D.detect) items.push('✗ 注入模式检测未开启：载荷在 S1 未被标记。');
+      if (!S.D.layer) items.push('✗ 指令分层未开启：S4 的注意力不受约束地绑定了注入指令（回去看第 4 步的红色弧线）。');
+      if (S.D.layer && scn.attackSeg === 'user') items.push('· 指令分层已开启但未生效：载荷来自用户层，分层管不到用户自己的输入。');
+      if (S.T >= 1.5) items.push('· 温度 T=' + S.T.toFixed(1) + '：采样更随机，但分布主体仍在攻击方向——温度不是防御。');
+      body = '「能说」到「能做」之间必须有一道门：把模型输出一律当作不可信输入处理（LLM05）。';
+    } else {
+      kind = 'ok'; title = '注入未生效：输出为正常回答';
+      if (S.D.detect && S.attackPresent && S.detHits > 0) items.push('✓ 注入模式检测：命中 ' + S.detHits + ' 处特征并标记为不可信数据（注意：变形写法仍可能绕过关键词）。');
+      if (S.D.layer && scn.attackSeg === 'doc') items.push('✓ 指令分层：跨信任层注意力压至 22%，注入指令无法进入行为决策。');
+      if (S.D.gate) items.push('✓ 输出门禁：本路径未出现敏感模式，正常放行——门禁不是只挡攻击，也保证误伤可控。');
+      if (!S.D.detect && !S.D.layer && scn.hasAttack) items.push('本路径正常是因为分布脚本对「防御生效」的组合做了简化演示；真实系统中，未设防的注入不保证自愈。');
+      body = '对比攻击路径：同样的上下文，防御开关决定了模型听谁的。';
+    }
+    box = '<div class="verdict ' + kind + '"><b class="t"><svg class="ic" aria-hidden="true"><use href="#' + (kind === 'ok' ? 'i-check' : (kind === 'bad' ? 'i-close' : 'i-warn')) + '"></use></svg>' + esc(title) + '</b>' +
+      esc(body) + (items.length ? '<ul>' + items.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') +
+      (codes.length ? '<div class="v-codes">' + codes.map(function (c) { return '<span class="rc danger">' + esc(c) + '</span>'; }).join('') + '</div>' : '') +
+      '</div>';
+    return box;
+  }
+
+  /* ---------- 注意力弧线绘制 ---------- */
+  function drawArcs() {
+    var wrap = $('#attnWrap'), svg = $('#attnSvg');
+    var rowEl = $('#tokRowS4');
+    if (!wrap || !svg || !rowEl) return;
+    var q = S.selTok;
+    if (q < 0 || q >= S.toks.length) return;
+    var raw = attnWeights(q).filter(function (r) { return r.j !== q; });
+    var top = raw.slice(0, 6);
+    var layerDamped = S.D.layer && SC.attackSeg === 'doc' && !S.D.detect;
+    if (layerDamped) {
+      var bestAtk = null;
+      for (var k = 0; k < raw.length; k++) { if (S.toks[raw[k].j].atk) { bestAtk = raw[k]; break; } }
+      if (bestAtk && !top.some(function (r) { return r.j === bestAtk.j; })) top.push(bestAtk);
+    }
+    var tsum = top.reduce(function (a, r) { return a + r.w; }, 0) || 1;
+    var weights = top.map(function (r) { return { j: r.j, w: r.w / tsum }; });
+    var wrapRect = wrap.getBoundingClientRect();
+    var chips = {};
+    $$('[data-tok]', rowEl).forEach(function (el) {
+      var i = +el.getAttribute('data-tok');
+      var r = el.getBoundingClientRect();
+      chips[i] = { x: r.left - wrapRect.left + r.width / 2, y: r.top - wrapRect.top, w: r.width };
+    });
+    var W = Math.max(rowEl.scrollWidth, wrapRect.width), H = wrap.offsetHeight || 300;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    var src = chips[q];
+    var parts = [];
+    weights.forEach(function (wobj) {
+      var t = chips[wobj.j];
+      if (!t || wobj.j === q) return;
+      var isAtk = S.toks[wobj.j].atk && S.attackEff;
+      var damped = layerDamped && S.toks[wobj.j].atk;
+      var cls = damped ? 'arc damped' : (isAtk ? 'arc hot' : 'arc');
+      var sw = damped ? 1.2 : (isAtk ? 2.2 + wobj.w * 15 : 1 + wobj.w * 8);
+      var op = damped ? 0.75 : (isAtk ? Math.min(0.55 + wobj.w * 1.9, 0.96) : Math.min(0.22 + wobj.w * 2.2, 0.7));
+      var xs = src.x, ys = Math.min(src.y - 2, 140), xt = t.x, yt = Math.min(t.y - 2, 140);
+      var lift = (isAtk && !damped) ? 36 + wobj.w * 230 : 26 + wobj.w * 90;
+      var cy = Math.max(10, Math.min(ys, yt) - lift);
+      parts.push({ path: 'M' + xs + ',' + ys + ' Q' + ((xs + xt) / 2) + ',' + cy + ' ' + xt + ',' + yt, cls: cls, sw: sw, op: op,
+        label: (wobj.w >= 0.035 || isAtk || damped) ? (wobj.w >= 0.005 ? pct(wobj.w) : '<1%') : null,
+        lx: (xs + xt) / 2, ly: Math.max(12, cy - 4), hot: isAtk && !damped, damped: damped, w: wobj.w });
+    });
+    var body = parts.map(function (p) {
+      var s = '<path class="' + p.cls + '" d="' + p.path + '" style="stroke-width:' + p.sw.toFixed(1) + ';opacity:' + p.op.toFixed(2) + '"/>';
+      if (p.label) s += '<text class="arc-label' + (p.hot ? ' hot' : (p.damped ? ' damped' : '')) + '" x="' + p.lx + '" y="' + p.ly + '" text-anchor="middle">' + p.label + '</text>';
+      return s;
+    }).join('');
+    if (src.y > 146) {
+      body += '<line class="arc-leader" x1="' + src.x + '" y1="142" x2="' + src.x + '" y2="' + (src.y - 4).toFixed(1) + '"/>';
+    }
+    body += '<circle class="arc-origin" cx="' + src.x + '" cy="142" r="3"/>';
+    svg.innerHTML = body;
+    /* 文字摘要（同时是无障碍替代文本） */
+    var selTok = S.toks[q];
+    var names = weights.slice(0, 4).map(function (w) {
+      var tk = S.toks[w.j];
+      var m = (tk.atk && S.attackEff) ? ' class="hot"' : ((S.D.layer && tk.atk) ? ' class="damped"' : '');
+      return '「' + esc(tk.text) + '」<span' + m + '>' + pct(w.w) + '</span>';
+    }).join(' · ');
+    var verb = selTok.assistant ? '回复起点 ASSISTANT' : '「' + esc(selTok.text) + '」';
+    var note;
+    if (S.attackEff && weights.some(function (w) { return S.toks[w.j].atk; })) {
+      note = '<b>注入被注意到了：</b>动作相关位置与攻击载荷之间的注意力显著升高（红弧）——行为从这里开始被改写。';
+    } else if (layerDamped) {
+      note = '<b>分层生效：</b>注意力头部被系统指令占满，攻击 token 跌出前六大去向——行为决策不再引用文档内指令。';
+    } else if (S.D.detect && S.attackPresent) {
+      note = '<b>检测生效：</b>攻击 token 仍会被读到，但不再获得额外注意力加成。';
+    } else {
+      note = '本场景注意力分布平稳：权重集中在系统指令与最近上下文。';
+    }
+    $('#attnSum').innerHTML = verb + ' 最注意到：' + names + '。<br>' + note;
+  }
+
+  /* 重绘流程导航（阶段推进 / 发送下一请求） */
+  function renderFlowNav() {
+    var box = $('#flowNav');
+    if (!box) return;
+    var lastStage = S.stage === STAGES.length - 1;
+    box.innerHTML = '<span class="flow-steps">阶段 <b>' + (S.stage + 1) + '</b> / ' + STAGES.length + '</span>' +
+      '<span class="fn-spacer"></span>' +
+      '<button class="flow-btn" type="button" id="btnFlowPrev"' + (S.stage === 0 ? ' disabled' : '') + '>' +
+      '<svg class="ic flip" aria-hidden="true"><use href="#i-arrow"></use></svg>上一阶段</button>' +
+      (lastStage
+        ? '<button class="flow-btn primary" type="button" id="btnFlowSend"><svg class="ic" aria-hidden="true"><use href="#i-send"></use></svg>发送下一请求</button>'
+        : '<button class="flow-btn primary" type="button" id="btnFlowNext">下一阶段<svg class="ic" aria-hidden="true"><use href="#i-arrow"></use></svg></button>');
+  }
+  /* 轻量更新 S1 发送按钮可用性（输入变化时） */
+  function updateSendBtn() {
+    var btn = $('#btnSend');
+    if (!btn) return;
+    var hasContent = S.segs.some(function (s) { return String(s.text).trim() !== ''; });
+    btn.disabled = !hasContent;
+  }
+  /* 切换输入模式：正常 / 异常（攻击） */
+  function setMode(mode) {
+    if (S.mode === mode) return;
+    if (mode === 'attack' && !SC.hasAttack) return; /* 对照场景无攻击载荷 */
+    S.mode = mode;
+    S.edits = {};
+    /* 切换模式即换了一批输入，旧的采样结果不再适用，重置生成与门禁状态 */
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    recompute();
+    renderAll();
+  }
+  /* 发送请求：S1 上下文 → 进入模型（S2） */
+  function sendRequest() {
+    stopAuto();
+    recompute();
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    setStage(1);
+  }
+  /* 发送下一请求：回到 S1 输入，保留当前场景与防御配置 */
+  function sendNextRequest() {
+    stopAuto();
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    S.edits = {};
+    recompute();
+    setStage(0);
+  }
+  /* 轻量更新阶段 1 的计数、检测旗标与发送按钮（不重绘输入框，避免打断输入） */
+  function updateCtxMeta() {
+    $$('#sbody0 .ctx-block').forEach(function (block, idx) {
+      var seg = S.segs[idx];
+      if (!seg) return;
+      var detN = seg.detRanges ? seg.detRanges.length : 0;
+      var count = $('.ctx-count', block);
+      if (count) count.textContent = seg.tokCount + ' tokens' + (seg.atkRanges.length ? ' · ' + seg.atkRanges.length + ' 处载荷标记' : '');
+      var flag = $('.ctx-flag', block);
+      if (flag) {
+        var missed = S.D.detect && S.deform && seg.id === 'doc' && detN === 0 && seg.atkRanges.length > 0;
+        flag.classList.toggle('missed', missed);
+        flag.classList.toggle('show', !!(S.D.detect && (detN > 0 || missed)));
+        var flagText = flag.lastChild;
+        if (flagText && flagText.nodeType === 3) flagText.textContent = missed ? '检测未命中：载荷夹带零宽字符，关键词匹配被绕过' : '注入模式检测：已命中 ' + detN + ' 处特征，本段标记为不可信数据';
+      }
+    });
+    updateSendBtn();
+  }
+
+  /* ---------- 渲染：全局 ---------- */
+  function renderAll() {
+    if ($$('#stages .stage').length !== STAGES.length) renderStageShell();
+    renderControls();
+    renderRail();
+    renderModeBar();
+    /* 阶段壳重绘（状态类 + 当前阶段内容） */
+    $$('#stages .stage').forEach(function (el, i) {
+      el.className = 'stage ' + stageState(i);
+      $('.st-state', el).textContent = stageStateText(i);
+      renderStageBody(i);
+    });
+    renderFlowNav();
+    updateFocusNotes();
+    if (S.stage === 3) drawArcs();
+    postHeightD();
+  }
+
+  /* ---------- 动作 ---------- */
+  function setStage(i) {
+    S.stage = Math.max(0, Math.min(STAGES.length - 1, i));
+    renderAll();
+    var cur = $('#stages .stage.is-current');
+    if (cur) cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function resetRun(keepStage) {
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    if (!keepStage) S.stage = 0;
+    stopAuto();
+    recompute();
+    renderAll();
+  }
+  function stopAuto() {
+    if (S.autoTimer) { clearInterval(S.autoTimer); S.autoTimer = null; }
+    var b = $('#btnAuto');
+    if (b) b.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-play"></use></svg>自动播放';
+    syncTxState();
+  }
+  function toggleAuto() {
+    if (S.autoTimer) { stopAuto(); return; }
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      /* 减少动效：直接跳到最后一帧，不做逐步动画 */
+      setStage(STAGES.length - 1); return;
+    }
+    var b = $('#btnAuto');
+    b.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-pause"></use></svg>暂停';
+    S.autoTimer = setInterval(function () {
+      if (S.stage >= STAGES.length - 1) { stopAuto(); return; }
+      setStage(S.stage + 1);
+    }, 1700);
+    syncTxState();
+  }
+  function doSample() {
+    if (S.blocked || S.genDone) return;
+    var r = sampleNext();
+    if (!r) return;
+    S.lastSample = { picked: r.picked, step: S.gen.length };
+    S.gen.push(r.text);
+    S.nonce++;
+    var scn = SC;
+    var hit = scn.gate.test(S.gen.join(''));
+    if (!hit && S.gen.length >= 3) {
+      S.genDone = true;
+      hit = scn.gate.test(fullText());
+    }
+    if (hit && S.D.gate) {
+      S.blocked = true; S.blockedTok = r.text;
+    }
+    renderAll();
+  }
+  function resample() {
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.nonce++;
+    renderAll();
+  }
+
+  /* ---------- 事件绑定 ---------- */
+  function bind() {
+    $('#riskList').addEventListener('click', function (e) {
+      var b = e.target.closest('.risk-item');
+      if (!b) return;
+      selectRisk(b.getAttribute('data-code'));
+    });
+    $('#riskSearch').addEventListener('input', debounce(function () {
+      FLT.q = this.value.trim();
+      renderCatalogPanel();
+    }, 200));
+    [['fltCat', 'cat'], ['fltStage', 'stage'], ['fltZone', 'zone'], ['fltPath', 'path']].forEach(function (pair) {
+      document.getElementById(pair[0]).addEventListener('change', function () {
+        FLT[pair[1]] = this.value;
+        if (pair[1] === 'stage') showStage9Detail(this.value);
+        renderCatalogPanel();
+      });
+    });
+    $('#stage9').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-s9]');
+      if (!b) return;
+      var id = b.getAttribute('data-s9');
+      FLT.stage = (FLT.stage === id) ? '' : id;
+      $('#fltStage').value = FLT.stage;
+      renderStage9();
+      showStage9Detail(FLT.stage);
+      renderCatalogPanel();
+    });
+    $('#defList').addEventListener('change', function (e) {
+      var input = e.target.closest('input[data-def]');
+      if (!input) return;
+      S.D[input.getAttribute('data-def')] = input.checked;
+      /* 第一性原则：输出事实在采样时成立。防御变更 = 改变了模型的生效行为 =
+       * 新的一次请求——旧的采样结果不再代表当前配置，必须重置（保留当前阶段）。 */
+      resetRun(true);
+    });
+    $('#tempRange').addEventListener('input', function () {
+      S.T = parseFloat(this.value) || 1;
+      $('#tempOut').textContent = S.T.toFixed(1);
+      renderAll();
+    });
+    $('#btnNext').addEventListener('click', function () { stopAuto(); setStage(S.stage + 1); });
+    $('#btnPrev').addEventListener('click', function () { stopAuto(); setStage(S.stage - 1); });
+    $('#btnAuto').addEventListener('click', toggleAuto);
+    $('#btnReset').addEventListener('click', function () { resetRun(false); });
+    $('#stages').addEventListener('click', function (e) {
+      var railBtn = e.target.closest('#rail button[data-step]');
+      if (railBtn && !railBtn.disabled) { stopAuto(); setStage(+railBtn.getAttribute('data-step')); return; }
+      var tok = e.target.closest('[data-tok]');
+      if (tok) {
+        S.selTok = +tok.getAttribute('data-tok');
+        renderStageBody(1); renderStageBody(2); renderStageBody(3); renderStageBody(4);
+        drawArcs();
+      }
+    });
+    $('#rail').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-step]');
+      if (b && !b.disabled) { stopAuto(); setStage(+b.getAttribute('data-step')); }
+    });
+    var refreshFromEdit = debounce(function () {
+      var saved = { stage: S.stage, gen: S.gen, done: S.genDone, blocked: S.blocked, sel: S.selTok };
+      recompute();
+      S.stage = saved.stage; S.gen = saved.gen; S.genDone = saved.done; S.blocked = saved.blocked;
+      if (saved.sel !== S.selTok && saved.sel >= 0) S.selTok = saved.sel;
+      for (var i = 1; i < STAGES.length; i++) renderStageBody(i);
+      updateCtxMeta();
+      if (S.stage === 3) drawArcs();
+    }, 280);
+    $('#stages').addEventListener('input', function (e) {
+      var ta = e.target.closest('textarea[data-segedit]');
+      if (!ta) return;
+      var seg = S.segs[+ta.getAttribute('data-segedit')];
+      if (!seg) return;
+      S.edits[seg.id] = ta.value;
+      seg.text = ta.value;
+      refreshFromEdit();
+    });
+    /* 顶部常驻模式栏在 #stages 之外，单独绑定 */
+    var modeBarTop = $('#modeBarTop');
+    if (modeBarTop) modeBarTop.addEventListener('click', function (e) {
+      var mb = e.target.closest('.mode-btn[data-mode]');
+      if (mb) setMode(mb.getAttribute('data-mode'));
+    });
+    $('#stages').addEventListener('click', function (e) {
+      if (e.target.closest('#btnSample')) { doSample(); return; }
+      if (e.target.closest('#btnResample')) { resample(); return; }
+      var mb = e.target.closest('.mode-btn[data-mode]');
+      if (mb) { setMode(mb.getAttribute('data-mode')); return; }
+      if (e.target.closest('#btnSend')) { sendRequest(); return; }
+      if (e.target.closest('#btnFlowNext')) { stopAuto(); setStage(S.stage + 1); return; }
+      if (e.target.closest('#btnFlowPrev')) { stopAuto(); setStage(S.stage - 1); return; }
+      if (e.target.closest('#btnFlowSend')) { sendNextRequest(); return; }
+      var ch = e.target.closest('.choice[data-idx]');
+      if (ch) handleQuizPick(+ch.getAttribute('data-idx'));
+    });
+    var onResize = debounce(function () { if (S.stage === 3) drawArcs(); postHeightD(); }, 160);
+    window.addEventListener('resize', onResize);
+    var dchk = $('#deformChk');
+    if (dchk) dchk.addEventListener('change', function () {
+      S.deform = dchk.checked;
+      S.edits.doc = null;
+      recompute();
+      renderAll();
+    });
+    /* 父页常驻地图的跳转指令 */
+    window.addEventListener('message', function (e) {
+      if (e.origin !== TX_ORIGIN || e.source !== window.parent) return;
+      var m = e.data || {};
+      if (m.type === 'aisec-tx-goto' && typeof m.step === 'number') {
+        stopAuto();
+        setStage(Math.max(0, Math.min(STAGES.length - 1, m.step)));
+      } else if (m.type === 'aisec-tx-set') {
+        if (m.key === 'mode') { setMode(m.value === 'attack' ? 'attack' : 'normal'); }
+        else if (m.key === 'detect' || m.key === 'layer' || m.key === 'gate') {
+          S.D[m.key] = !!m.value;
+          recompute();
+          renderAll();
+        }
+      } else if (m.type === 'aisec-tx-ctl') {
+        if (m.cmd === 'prev') { stopAuto(); setStage(S.stage - 1); }
+        else if (m.cmd === 'next') { stopAuto(); setStage(S.stage + 1); }
+        else if (m.cmd === 'play') { if (S.autoTimer) stopAuto(); else toggleAuto(); }
+        else if (m.cmd === 'reset') { resetRun(false); }
+      }
+    });
+  }
+
+  /* ---------- 风险目录 / 风险卡 / 九阶段 / 随堂测验 ---------- */
+  var FLT = { q: '', cat: '', stage: '', zone: '', path: '' };
+  var VISITED = (function () { try { return JSON.parse(localStorage.getItem('tx-visited') || '{}'); } catch (e) { return {}; } })();
+  function saveVisited() { try { localStorage.setItem('tx-visited', JSON.stringify(VISITED)); } catch (e) {} }
+  function catOf(code) {
+    if (code.indexOf('LLM') === 0) return 'llm';
+    if (code.indexOf('MCP') === 0) return 'mcp';
+    if (code.indexOf('ASI') === 0) return 'agent';
+    if (code.indexOf('AST') === 0) return 'skills';
+    if (code.indexOf('INF') === 0) return 'infra';
+    return 'web';
+  }
+  function riskMatches(code) {
+    var kb = KB[code];
+    if (!kb) return false;
+    if (FLT.cat && catOf(code) !== FLT.cat) return false;
+    if (FLT.stage && (RISK_STAGES[code] || []).indexOf(FLT.stage) < 0) return false;
+    if (FLT.zone && kb.z.split(',').indexOf(FLT.zone) < 0) return false;
+    if (FLT.path && String(PATH_OF[code] || '') !== FLT.path) return false;
+    if (FLT.q) {
+      var hay = (code + ' ' + kb.t + ' ' + kb.en + ' ' + kb.b).toLowerCase();
+      if (hay.indexOf(FLT.q.toLowerCase()) < 0) return false;
+    }
+    return true;
+  }
+  function renderCatalogPanel() {
+    var box = $('#riskList');
+    if (!box) return;
+    var noFilter = !FLT.cat && !FLT.stage && !FLT.zone && !FLT.path && !FLT.q;
+    var html = '';
+    if (noFilter) {
+      html += '<button type="button" class="risk-item' + (S.scn === 'benign' ? ' active' : '') + '" data-code="benign" role="option" aria-selected="' + (S.scn === 'benign') + '">' +
+        '<span class="ri-code" style="--rc:var(--ok)">对照</span><span class="ri-title">正常请求（无攻击基线）</span></button>';
+    }
+    CATS6.forEach(function (c) {
+      var codes = Object.keys(KB).filter(function (k) { return catOf(k) === c.id && riskMatches(k); });
+      if (!codes.length) return;
+      html += '<div class="risk-group-h" style="--rc:' + c.color + '">' + esc(c.name) + ' · ' + codes.length + '</div>';
+      html += codes.map(function (k) {
+        var kb = KB[k];
+        var lvColor = kb.lv === 1 ? 'var(--ok)' : (kb.lv === 2 ? 'var(--warn)' : 'var(--danger)');
+        return '<button type="button" class="risk-item' + (S.scn === k ? ' active' : '') + (VISITED[k] ? ' visited' : '') + '" data-code="' + k + '" role="option" aria-selected="' + (S.scn === k) + '">' +
+          '<span class="ri-code" style="--rc:' + c.color + '">' + k + '</span>' +
+          '<span class="ri-title">' + esc(kb.t) + '</span>' +
+          '<span class="ri-lv" style="background:' + lvColor + '" title="' + esc(LEVELS6[kb.lv] || '') + '难度"></span></button>';
+      }).join('');
+    });
+    box.innerHTML = html || '<div class="risk-empty">没有匹配的风险——换个关键词或清空筛选试试。</div>';
+  }
+  function renderRiskCard() {
+    var box = $('#riskCard');
+    if (!box) return;
+    if (S.scn === 'benign') {
+      box.innerHTML = '<h4>正常请求（对照）</h4><div class="rc-en">BASELINE · 无攻击载荷</div>' +
+        '<div class="rc-brief">先看一遍没有攻击时的正常数据流，再切换到任意风险对比每个阶段的变化。</div>';
+      return;
+    }
+    var kb = KB[S.scn];
+    var cat = CATS6.filter(function (c) { return c.id === catOf(S.scn); })[0] || CATS6[0];
+    var zones = kb.z.split(',').map(function (z) { return '<span class="mini-chip zone">' + esc(ZONES6[z] || z) + '</span>'; }).join('');
+    var stages = (RISK_STAGES[S.scn] || []).map(function (s) {
+      var st = STAGE9.filter(function (x) { return x.id === s; })[0] || { name: '' };
+      return '<span class="mini-chip">' + esc(s + ' ' + st.name) + '</span>';
+    }).join('');
+    var chips = '<div class="chiprow" style="margin-bottom:8px">' +
+      '<span class="mini-chip" style="color:' + cat.color + ';border-color:' + cat.color + '">' + esc(cat.name) + '</span>' +
+      '<span class="mini-chip">' + esc(LEVELS6[kb.lv] || '') + '难度</span>' +
+      '<span class="mini-chip">原站演示：' + esc(DEMOTYPE[kb.dt] || kb.dt || '') + '</span></div>';
+    box.innerHTML = '<h4>' + esc(kb.t) + '</h4><div class="rc-en">' + esc(kb.en) + ' · ' + esc(S.scn) + '</div>' + chips +
+      '<div class="rc-brief">' + esc(kb.b) + '</div>' +
+      '<div class="rc-analogy">' + esc(kb.a) + '</div>' +
+      '<div class="chiprow">' + zones + stages + '</div>';
+  }
+  function renderStage9() {
+    var box = $('#stage9');
+    if (!box) return;
+    box.innerHTML = STAGE9.map(function (s) {
+      return '<button type="button" data-s9="' + s.id + '"' + (FLT.stage === s.id ? ' class="on"' : '') + ' aria-pressed="' + (FLT.stage === s.id) + '">' + s.id + ' ' + esc(s.name) + '</button>';
+    }).join('');
+  }
+  function showStage9Detail(id) {
+    var box = $('#stage9Detail');
+    if (!box) return;
+    var s = STAGE9.filter(function (x) { return x.id === id; })[0];
+    if (!s) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<b>' + esc(s.id + ' ' + s.name) + '</b>' + esc(s.tech) + '<br>控制要点：' + s.ctrl.map(function (c) { return esc(c); }).join('；');
+  }
+  function initFilters() {
+    $('#fltCat').innerHTML = '<option value="">全部知识域</option>' + CATS6.map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>'; }).join('');
+    $('#fltStage').innerHTML = '<option value="">全部攻击阶段</option>' + STAGE9.map(function (s) { return '<option value="' + s.id + '">' + s.id + ' ' + esc(s.name) + '</option>'; }).join('');
+    $('#fltZone').innerHTML = '<option value="">全部分区</option>' + Object.keys(ZONES6).map(function (z) { return '<option value="' + z + '">' + esc(ZONES6[z]) + '</option>'; }).join('');
+    $('#fltPath').innerHTML = '<option value="">全部学习路径</option>' + [1, 2, 3, 4, 5].map(function (n) { return '<option value="' + n + '">学习路径 ' + n + '</option>'; }).join('');
+  }
+  function selectRisk(code) {
+    S.scn = code;
+    S.selTok = -1;
+    S.edits = {};
+    S.deform = false;
+    if (code !== 'benign') { VISITED[code] = 1; saveVisited(); }
+    resetRun(true);
+    renderCatalogPanel();
+    renderRiskCard();
+    syncProgress(null);
+  }
+  function updateFocusNotes() {
+    $$('#stages .sn-focus').forEach(function (el) {
+      var i = +el.getAttribute('data-snf');
+      var show = SC && SC.note && (SC.focus || []).indexOf(i) >= 0;
+      el.className = 'sn-focus' + (show ? ' show' : '');
+      el.innerHTML = show ? '<b>本剧本看点 · ' + esc(SC.name) + '</b>' + esc(SC.note) : '';
+    });
+  }
+  function quizHtml() {
+    if (S.scn === 'benign' || !KB[S.scn]) return '';
+    var q = KB[S.scn].q;
+    var answered = S.quizPick !== null && S.quizPick !== undefined;
+    var opts = q[1].map(function (o, i) {
+      var cls = 'choice';
+      if (answered) {
+        if (i === q[2]) cls += ' correct';
+        else if (i === S.quizPick) cls += ' wrong';
+      }
+      return '<button type="button" class="' + cls + '" data-idx="' + i + '"' + (answered ? ' disabled' : '') + '>' +
+        '<span class="ckey">' + 'ABCD'.charAt(i) + '</span><span>' + esc(o) + '</span></button>';
+    }).join('');
+    return '<div class="quiz-card"><h4>随堂测验 · ' + esc(S.scn) + ' ' + esc(KB[S.scn].t) + '</h4>' +
+      '<p class="quiz-sub">结合上面的流水线实验验证你的判断。</p>' +
+      '<div class="quiz-q">' + esc(q[0]) + '</div>' +
+      '<div class="choice-grid">' + opts + '</div>' +
+      (answered ? '<div class="quiz-explain">' + esc(q[3]) + '</div>' : '') +
+      '</div>';
+  }
+  function handleQuizPick(i) {
+    if (S.quizPick !== null && S.quizPick !== undefined) return;
+    S.quizPick = i;
+    if (S.scn !== 'benign' && KB[S.scn]) syncProgress(i === KB[S.scn].q[2]);
+    renderStageBody(5);
+  }
+
+  /* ---------- 启动（带兜底错误提示） ---------- */
+  try {
+    if (EMBEDDED) document.body.classList.add('embedded');
+    (function () {
+      var m = /[?&]risk=([A-Za-z0-9]+)/.exec(location.search || '');
+      if (m && KB[m[1]]) { S.scn = m[1]; VISITED[m[1]] = 1; saveVisited(); }
+    })();
+    recompute();
+    renderAll();
+    bind();
+    initFilters();
+    renderStage9();
+    renderCatalogPanel();
+    renderRiskCard();
+    postHeight();
+    syncProgress(null);
+    window.AISEC._txDebug = function () {
+      var docText = String(S.segs[1] && S.segs[1].text || '');
+      var scDoc = String(SC.doc || '');
+      var scClean = String(SC.docClean || '');
+      var atkMode = S.mode === 'attack' && SC.hasAttack;
+      return {
+        mode: S.mode, deform: S.deform, atkMode: atkMode,
+        edits: Object.keys(S.edits || {}),
+        docLen: docText.length,
+        docHasPayload: docText.indexOf('忽略') >= 0,
+        scDocHasPayload: scDoc.indexOf('忽略') >= 0,
+        scCleanHasPayload: scClean.indexOf('忽略') >= 0,
+        docTail: docText.slice(-40),
+        scDocTail: scDoc.slice(-40)
+      };
+    };
+  } catch (err) {
+    var main = $('.page');
+    if (main) {
+      var box = document.createElement('div');
+      box.className = 'notice';
+      box.style.marginTop = '16px';
+      box.textContent = '演示初始化失败：' + (err && err.message ? err.message : err) + '。请刷新页面重试；若持续失败，请更换现代浏览器（Chrome / Edge / Safari / Firefox 最新版）。';
+      main.insertBefore(box, main.firstChild);
+    }
+  }
+})();
+</script>
+</body>
+</html>
