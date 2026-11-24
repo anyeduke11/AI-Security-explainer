@@ -10,7 +10,7 @@ AI Security Explainer 是一个**面向零基础读者的交互式 AI 安全学�
 
 ## 当前版本
 
-**v1.0.0**（首个正式发布）包含 **9 大知识域 / 152 条风险 / 785 道题**（152 条随堂题 + 633 道扩展题）与 7 阶段 44 步新手路径。版本说明与源码压缩包见 [GitHub Releases](https://github.com/anyeduke11/AI-Security-explainer/releases)。
+**v0.1.0**（首个公开预览版）包含 **9 大知识域 / 152 条风险 / 785 道题**（152 条随堂题 + 633 道扩展题）与 7 阶段 44 步新手路径。当前版本仍在迭代中，版本说明与源码压缩包见 [GitHub Releases](https://github.com/anyeduke11/AI-Security-explainer/releases)。
 
 ## 联系方式与商业授权
 

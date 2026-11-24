@@ -4,7 +4,8 @@
 
 <p align="center">
   <strong>交互式 AI 安全学习站 · 面向零基础读者</strong><br />
-  在一张模拟的金融企业网络拓扑上，沿九阶段攻击路径（S1~S9）逐跳学习 AI 安全知识与 OWASP 系列风险清单。
+  在一张模拟的金融企业网络拓扑上，沿九阶段攻击路径（S1~S9）逐跳学习 AI 安全知识与 OWASP 系列风险清单。<br />
+  当前版本 <a href="https://github.com/anyeduke11/AI-Security-explainer/releases/tag/v0.1.0">v0.1.0 · 首个公开预览版</a>
 </p>
 
 所有演示均为**浏览器本地规则化模拟**：不联网、不执行用户输入、不存储任何提交内容，仅用于防御性学习。
