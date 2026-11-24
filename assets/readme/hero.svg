@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="hero-title hero-desc">
+  <title id="hero-title">AI Security Explainer — 沿九阶段攻击路径学懂 AI 安全</title>
+  <desc id="hero-desc">左侧为项目名与一句话价值，右侧为项目真实的九阶段攻击路径蛇形图，节点 S1 到 S9 依次连接。</desc>
+
+  <defs>
+    <linearGradient id="path-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3f6ff0"/>
+      <stop offset="1" stop-color="#dc4c43"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="400" rx="26" fill="#0b1120"/>
+
+  <!-- 标题区 -->
+  <g id="title-block" transform="translate(58 46)">
+    <text x="0" y="24" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2.4" fill="#7ba3ff">INTERACTIVE AI SECURITY LEARNING</text>
+    <text x="0" y="104" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="58" font-weight="750" fill="#ffffff">AI Security</text>
+    <text x="0" y="168" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="58" font-weight="750" fill="#ffffff">Explainer</text>
+    <text x="0" y="220" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="27" fill="#b9c9e8">沿九阶段攻击路径 · 学懂 AI 安全</text>
+    <line x1="0" y1="252" x2="520" y2="252" stroke="#22304f" stroke-width="2"/>
+    <text x="0" y="292" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" fill="#8fa8d4">9 DOMAINS  ·  152 RISKS  ·  785 QUESTIONS</text>
+    <text x="0" y="326" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="19" fill="#7d92bb">浏览器本地模拟 · 零依赖 · 不联网</text>
+  </g>
+
+  <!-- 攻击路径图（项目真实素材：S1-S9 九阶段） -->
+  <g id="attack-path" transform="translate(660 34)">
+    <text x="0" y="22" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" letter-spacing="1.6" fill="#7ba3ff">FINANCIAL NETWORK · ATTACK PATH S1→S9</text>
+
+    <!-- 蛇形连接路径 -->
+    <path d="M 100 80 L 246 80 L 392 80 L 392 166 L 246 166 L 100 166 L 100 252 L 246 252 L 392 252"
+          fill="none" stroke="url(#path-grad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.72"/>
+
+    <!-- 九阶段节点：3×3 蛇形顺序 -->
+    <g id="stages">
+      <g transform="translate(100 80)">
+        <circle r="21" fill="#122042" stroke="#3f6ff0" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#cfe0ff">1</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">侦察</text>
+      </g>
+      <g transform="translate(246 80)">
+        <circle r="21" fill="#122042" stroke="#3f6ff0" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#cfe0ff">2</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">接入</text>
+      </g>
+      <g transform="translate(392 80)">
+        <circle r="21" fill="#122042" stroke="#3f6ff0" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#cfe0ff">3</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">立足</text>
+      </g>
+      <g transform="translate(392 166)">
+        <circle r="21" fill="#122042" stroke="#5b7ff5" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#cfe0ff">4</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">凭据</text>
+      </g>
+      <g transform="translate(246 166)">
+        <circle r="21" fill="#122042" stroke="#5b7ff5" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#cfe0ff">5</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">横移</text>
+      </g>
+      <g transform="translate(100 166)">
+        <circle r="21" fill="#1a1c38" stroke="#9a6ff0" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#e0d4ff">6</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">劫持</text>
+      </g>
+      <g transform="translate(100 252)">
+        <circle r="21" fill="#1e1a33" stroke="#b85fc4" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#f2d4f7">7</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">操纵</text>
+      </g>
+      <g transform="translate(246 252)">
+        <circle r="21" fill="#251a2b" stroke="#dc4c43" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#ffd9d5">8</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">外发</text>
+      </g>
+      <g transform="translate(392 252)">
+        <circle r="21" fill="#251a2b" stroke="#dc4c43" stroke-width="2.5"/>
+        <text y="7" text-anchor="middle" font-family="ui-monospace, monospace" font-size="19" font-weight="700" fill="#ffd9d5">9</text>
+        <text y="-34" text-anchor="middle" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#b9c9e8">响应</text>
+      </g>
+    </g>
+
+    <!-- 图例：ZONE 分区标记 -->
+    <g transform="translate(0 320)">
+      <text x="0" y="0" font-family="ui-monospace, monospace" font-size="16" fill="#7d92bb">ZONE 1–6  ·  公网 → DMZ → 应用 → 数据 → 模型 → 外部动作</text>
+    </g>
+  </g>
+</svg>
