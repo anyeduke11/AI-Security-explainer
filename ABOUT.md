@@ -8,6 +8,10 @@ AI Security Explainer 是一个**面向零基础读者的交互式 AI 安全学�
 - **本地优先**：单机即可运行，所有交互在浏览器本地完成，学习记录仅存于本机。
 - **教学模拟**：所有演示是规则化模拟，不联网、不执行用户输入、不收集数据。
 
+## 当前版本
+
+**v1.0.0**（首个正式发布）包含 **9 大知识域 / 152 条风险 / 785 道题**（152 条随堂题 + 633 道扩展题）与 7 阶段 44 步新手路径。版本说明与源码压缩包见 [GitHub Releases](https://github.com/anyeduke11/AI-Security-explainer/releases)。
+
 ## 联系方式与商业授权
 
 - **GitHub**：https://github.com/anyeduke11/AI-Security-explainer
@@ -25,7 +29,7 @@ AI Security Explainer 是一个**面向零基础读者的交互式 AI 安全学�
 
 | 路径 | 说明 |
 |---|---|
-| `index.html` + `assets/` | 可直接运行的静态站点 |
+| `index.html` + `assets/` | 可直接运行的静态站点（含 `assets/readme/` 下两张项目原生 README 图） |
 | `demos/` | 独立 Transformer 攻防透视页 |
 | `docs/` | 知识整合方案与验收要求 |
 | `scripts/` | 题库构建流水线与验证脚本（部分工具需外部源文件，不随仓库分发） |
