@@ -45,14 +45,16 @@
 5. **如何防护** — 输入侧 / 系统侧 / 出口侧三层控制
 6. **典型场景分析** — 案例 → 影响链路 → 治理 → 辨析
 7. **随堂小测** — 随堂题 + 测验中心按知识域/难度组卷
+8. **实操题** — 54 道（九域各 6 道），配置终态 / 有序步骤 / 产物清单三种形式，关键项与终态部分得分
 
-### 五项配套功能
+### 六项配套功能
 
 - **攻击路径实验室** — 网络拓扑 / 攻击时间轴 / 防御滑块 / 阶段热度矩阵
 - **风险热度** — 阶段 × 知识域 9×9 矩阵，点击联动筛选
 - **新手学习路径** — 7 阶段 44 步，从基础到合规逐层深入
-- **测验中心** — 785 题，支持知识域、难度、错题筛选
-- **我的学习进度** — 本地记录、掌握等级分布、导出备份
+- **测验中心** — 785 道单选题 + 54 道实操题，支持知识域、难度、题型、错题筛选
+- **知识卡片** — 独立「记忆」菜单，152 张内置卡片 + 用户自建，完整 SM-2 间隔重复
+- **我的学习进度** — 本地记录、掌握等级分布、记忆与实操维度、导出备份
 
 ---
 
@@ -72,7 +74,7 @@
 | 社会与安全影响 | 社会、经济、关键基础设施与军事影响链路 | 10 |
 | 合规与治理 | 国家战略、法规政策、标准规范与评估报告 | 10 |
 
-共 **152 条风险条目**；统一「AI安全题库」共 **785 题**（152 条风险随堂题 + 633 道扩展题）。
+共 **152 条风险条目**；统一「AI安全题库」共 **785 道单选题**（152 条风险随堂题 + 633 道扩展题）；另有 **54 道实操题**（九域各 6 道）、**152 张内置知识卡片**（支持自建）。
 
 ---
 
@@ -85,11 +87,13 @@ assets/
   readme/workflow.svg               README 学习闭环图
   css/style.css                     全站样式（含术语悬浮卡、知识卡片）
   js/data.js        ★ 知识库唯一数据源：CATS / RISKS / ZONES / STAGES / PATHS / SCRIPTS / GLOSSARY
+  js/ai-bank.js                     ★ 生成物：扩展题库 633 题（九域，Q001~Q633）
+  js/cards.js                       ★ 知识卡片数据层与完整 SM-2 算法
+  js/practical.js                   ★ 54 道实操题（九域全量）与本地判分器
   js/glossary.js                    术语悬浮卡
   js/demos.js                       11 类交互演示引擎（含 concept/policy/impact）
   js/lab.js                         攻击路径实验室（拓扑 / 时间轴 / 热度矩阵）
-  js/app.js                         路由 / 搜索 / 测验 / 进度 / 知识卡片
-  js/ai-bank.js                     ★ 生成物：扩展题库 633 题（九域，Q001~Q633）
+  js/app.js                         路由 / 搜索 / 测验 / 卡片复习 / 进度
 demos/
   transformer-attack-explainer.html Transformer 攻防透视（可独立打开）
 docs/
@@ -100,9 +104,12 @@ scripts/
   transform.mjs / synonyms.mjs      题干同义改写与选项随机化
   gen-ai-bank.mjs                   生成 ai-bank.js
   enrich-risks.mjs / update-risk-text.mjs  描述丰富与回写工具
-  e2e-ai-quiz.mjs                   CDP 端到端验证
+  e2e-ai-quiz.mjs                   CDP 端到端验证（题库）
+  e2e-cards-practical.mjs           CDP 端到端验证（卡片 + 实操）
 tests/
   logic / interaction / persistence / ai-bank.test.mjs   三层 TDD + 题库 TDD
+  cards.test.mjs                    卡片字段与完整 SM-2 算法 TDD
+  practical.test.mjs                实操题完整性与判分器 TDD
 LICENSE                             知识共享署名-非商业性使用-相同方式共享 4.0
 ABOUT.md                            项目定位、作者与授权说明
 ```
@@ -127,7 +134,10 @@ ABOUT.md                            项目定位、作者与授权说明
 ```bash
 node tests/logic.test.mjs          # 数据完整性与逻辑
 node tests/ai-bank.test.mjs        # 题库等价性、去重、九域一致性
-node scripts/e2e-ai-quiz.mjs       # 真实浏览器端到端（需 Chrome CDP 9223 + 站点 8899）
+node tests/cards.test.mjs          # 卡片字段与完整 SM-2（1/6/interval×EF、EF≥1.3）
+node tests/practical.test.mjs      # 实操题完整性与判分器（部分得分、顺序、禁用项）
+node scripts/e2e-ai-quiz.mjs       # 题库端到端（需 Chrome CDP 9223 + 站点 8899）
+node scripts/e2e-cards-practical.mjs  # 卡片 + 实操端到端
 ```
 
 > 已知范围外项：`logic.test.mjs` 中的 C3 / D3 / F5 为早期识别的待改进项，不影响核心学习功能。

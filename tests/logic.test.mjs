@@ -177,6 +177,141 @@ spec('D4 每道题的正确选项索引合法且解释非空', () => {
   });
 });
 
+/* ---------- D5 · F1 洗牌（展示序洗牌 + 可注入随机源） ---------- */
+spec('D5 洗牌为 Fisher-Yates 且支持注入随机源（可复现）', () => {
+  const app = read('assets/js/app.js');
+  const fn = app.slice(app.indexOf('function shuffle'), app.indexOf('function quizStart'));
+  assert.ok(/function\s+shuffle/.test(fn), '应有统一 shuffle 实现');
+  assert.ok(!/Math\.random\(\)\s*-\s*0\.5/.test(app), '全文件不应残留 Math.random()-0.5 模式');
+  assert.ok(/var j = Math\.floor\(r\(\) \* \(i \+ 1\)\)/.test(fn), '应为 Fisher-Yates 交换式实现');
+  assert.ok(/rnd \|\| Math\.random/.test(fn), '随机源应可注入（默认 Math.random）');
+  /* 用固定种子验证可复现：同一随机源两次洗牌结果一致 */
+  const mk = seed => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; };
+  const sh = (arr, rnd) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
+  const base = [0, 1, 2, 3, 4, 5, 6, 7];
+  assert.deepEqual(sh(base, mk(42)), sh(base, mk(42)), '同一种子应产出同一结果');
+  assert.notDeepEqual(sh(base, mk(1)), sh(base, mk(2)), '不同种子应产出不同结果');
+  /* 无偏性抽样：大量重排后各位置出现频次应大致均衡（不集中在单一位置） */
+  const N = 3000, freq = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (let t = 0; t < N; t++) { const r = sh(base, mk(t + 1)); r.forEach((v, i) => { if (v === 0) freq[i]++; }); }
+  const exp = N / base.length;
+  freq.forEach((f, i) => assert.ok(Math.abs(f - exp) < exp * 0.2, '位置 ' + i + ' 频次 ' + f + ' 偏离期望 ' + exp));
+});
+spec('D6 随堂小测与测验中心渲染路径均做展示序洗牌并保留原始索引映射', () => {
+  const app = read('assets/js/app.js');
+  assert.ok(/function displayOrder/.test(app), '应有 displayOrder 展示洗牌实现');
+  /* 随堂小测：viewRisk 内使用 displayOrder 并写出 data-orig 映射 */
+  const riskFn = app.slice(app.indexOf('function miniQuizHTML'), app.indexOf('function viewRisk'));
+  assert.ok(/displayOrder\(r\.quiz\.o\)/.test(riskFn), '随堂小测应调用 displayOrder');
+  assert.ok(/data-orig=/.test(riskFn), '随堂小测应输出「展示索引→原始索引」映射');
+  /* 测验中心：quizQuestionHTML 内使用 displayOrder 并写出 data-q-orig */
+  const quizFn = app.slice(app.indexOf('function quizQuestionHTML'), app.indexOf('function quizResultHTML'));
+  assert.ok(/displayOrder\(r\.quiz\.o\)/.test(quizFn), '测验中心应调用 displayOrder');
+  assert.ok(/data-q-orig=/.test(quizFn), '测验中心应输出「展示索引→原始索引」映射');
+  /* 判定必须用原始索引，而不是展示索引 */
+  const quizWire = app.slice(app.indexOf('function wireQuiz'), app.indexOf('/* ---------------- 页面：进度'));
+  assert.ok(/qOrig/.test(quizWire) && /=== r\.quiz\.a/.test(quizWire), '判定应基于原始索引 r.quiz.a');
+  const riskWire = app.slice(app.indexOf('function wireRisk'), app.indexOf('/* ---------------- 页面：学习路径'));
+  assert.ok(/dataset\.orig/.test(riskWire), '随堂小测判定应基于原始索引');
+});
+spec('D7 展示序洗牌后判定结果与洗牌前一致（映射可逆）', () => {
+  const app = read('assets/js/app.js');
+  /* 复刻 app.js 的 displayOrder 语义：order[展示位] = 原始索引 */
+  const order = [2, 0, 1];
+  const r = { quiz: { a: 1 } };
+  /* 展示位 0 对应原始索引 2；正确项原始索引 1 → 落在展示位 2 */
+  const displayPos = order.indexOf(r.quiz.a);
+  assert.equal(displayPos, 2);
+  assert.equal(order[displayPos], r.quiz.a, '映射必须可逆：展示位→原始索引');
+});
+
+/* ---------- D8 · P0-1 预测闸门（与 simulate 同源） ---------- */
+spec('D8 预测闸门：未预测时「发起攻击」禁用，合法对照态无闸门', () => {
+  const demos = read('assets/js/demos.js');
+  const fn = demos.slice(demos.indexOf('function engineRange'), demos.indexOf('/* 8) flow'));
+  assert.ok(/b\.disabled = needPredict && !st\.predict/.test(fn), '未选预测时应禁用发起按钮');
+  assert.ok(/st\.variant !== 'benign' && !st\.predict\) return;/.test(fn), '未预测时应拦截发起动作');
+  assert.ok(/if \(st\.variant === 'benign'\)/.test(fn), '合法对照态应特殊处理（无预测闸门）');
+  assert.ok(/③ 预测（先预测再验证）/.test(fn), '应存在独立的预测卡片');
+  assert.ok(/④ 执行/.test(fn), '执行组应排在预测之后');
+});
+spec('D9 预测真值与 simulate 同源（禁止两套判定逻辑）', () => {
+  const demos = read('assets/js/demos.js');
+  const fn = demos.slice(demos.indexOf('function engineRange'), demos.indexOf('/* 8) flow'));
+  assert.ok(/function predictTruth\(\) \{ return simulate\(\)\.truth; \}/.test(fn), 'predictTruth 必须直接复用 simulate()');
+  assert.ok(/truth: truth/.test(fn), 'simulate() 必须返回 truth 字段');
+  /* truth 取值域固定为四种 */
+  assert.ok(/var truth = 'none'/.test(fn) && /truth = 'ok'/.test(fn) && /truth = 'blocked'/.test(fn) && /truth = 'atk'/.test(fn),
+    'truth 应覆盖 none/ok/blocked/atk 四种取值');
+  /* 不得出现独立的第二套判定分支：predictTruth 之外不应另写按 D 配置判定结果的代码 */
+  const predTruthBody = fn.slice(fn.indexOf('function predictTruth'), fn.indexOf('function predictMatches'));
+  assert.ok(!/st\.D\./.test(predTruthBody), 'predictTruth 内部不得自行按防御配置判定');
+});
+spec('D10 预测记录可回溯（st.predicted 历史 + 答错三段对照）', () => {
+  const demos = read('assets/js/demos.js');
+  const fn = demos.slice(demos.indexOf('function engineRange'), demos.indexOf('/* 8) flow'));
+  assert.ok(/st\.predicted\.push\(st\.predict\)/.test(fn), '应记录预测历史（允许改答案并重测）');
+  assert.ok(/st\.predicted = \[\]/.test(fn), '重置时应清空预测历史');
+  assert.ok(/你的预测/.test(fn) && /实际结果/.test(fn) && /差异原因/.test(fn), '答错反馈应含「你的预测 / 实际结果 / 差异原因」三段');
+  assert.ok(/st\.predict: st\.predict/.test(fn) || /predict: st\.predict/.test(fn), '闭环完成时应把预测结果回传宿主');
+  assert.ok(/onRangeComplete/.test(fn), '闭环完成应回调 NS.demos.onRangeComplete');
+});
+
+/* ---------- D11 · P0-2 进度三维度 ---------- */
+spec('D11 进度三维度：defaults 含 ranged，读懂/练过/答对各自计数', () => {
+  const app = read('assets/js/app.js');
+  const defaultsFn = app.slice(app.indexOf('function defaults'), app.indexOf('var S;'));
+  assert.ok(/ranged: \{\}/.test(defaultsFn), 'defaults() 应包含 ranged 字段');
+  assert.ok(/S\.ranged = S\.ranged \|\| \{\}/.test(app), '旧用户无 ranged 键时应兜底为空对象');
+  assert.ok(/function rangedCount/.test(app) && /function quizAnsweredCount/.test(app), '应有练过与答对计数函数');
+  const progFn = app.slice(app.indexOf('function viewProgress'), app.indexOf('function wireProgress'));
+  assert.ok(/读懂/.test(progFn) && /练过/.test(progFn) && /答对/.test(progFn), '进度页应展示三维度');
+  assert.ok(/PROGRESS_WEIGHT/.test(app) && /read: 0\.4/.test(app) && /ranged: 0\.4/.test(app) && /quiz: 0\.2/.test(app),
+    '主环权重应为 读懂 40% + 练过 40% + 答对 20%');
+  assert.ok(/NS\.demos\.onRangeComplete = onRangeComplete/.test(app), 'app.js 应注册 onRangeComplete 回调');
+});
+spec('D12 migrateCodes 兜底 ranged 的旧编号键', () => {
+  const app = read('assets/js/app.js');
+  const mig = app.slice(app.indexOf('function migrateCodes'), app.indexOf('function learnedCount'));
+  assert.ok(/\['read', 'visited', 'mini', 'ranged'\]/.test(mig), 'migrateCodes 应覆盖 ranged 字段');
+  /* 旧用户 localStorage 无 ranged 键时不得抛错（迁移后 ranged 仍为对象） */
+  const map = { MCP1: 'MCP01', MCP8: 'MCP08' };
+  const state = { read: { MCP1: 1 }, visited: {}, mini: {}, ranged: { MCP1: 1 }, quiz: { total: 0, right: 0, wrong: {}, ok: {} } };
+  ['read', 'visited', 'mini', 'ranged'].forEach(f => Object.keys(state[f]).forEach(k => {
+    if (map[k]) { state[f][map[k]] = state[f][k]; delete state[f][k]; }
+  }));
+  assert.ok(state.ranged.MCP01, 'ranged 旧编号应迁移');
+  assert.equal(state.ranged.MCP1, undefined, 'ranged 旧编号键应被删除');
+  const legacy = { read: {}, visited: {}, mini: {}, theme: 'light', quiz: { total: 0, right: 0, wrong: {} } };
+  legacy.ranged = legacy.ranged || {};
+  assert.deepEqual(legacy.ranged, {}, '无 ranged 键的旧状态应兜底为空对象且不报错');
+});
+
+/* ---------- D13 · P1-1 术语补齐至 46 条 ---------- */
+spec('D13 术语表补齐至 46 条且 12 条新术语均可检索', () => {
+  assert.equal(D.GLOSSARY.length, 46, 'GLOSSARY 应为 46 条，实际 ' + D.GLOSSARY.length);
+  const need = ['API', 'SQL 注入', 'Shell', 'YAML', 'schema', 'TLS', 'SAST', '反序列化', '熔断', '参数化', '告警', '密钥管理'];
+  need.forEach(t => {
+    const g = D.GLOSSARY.find(x => x.term === t);
+    assert.ok(g, '缺少术语 ' + t);
+    assert.ok(g.short && g.short.length > 8, t + ' 释义过短');
+    assert.ok(Array.isArray(g.see) && g.see.length > 0, t + ' 应有关联风险');
+    g.see.forEach(c => assert.ok(D.RISK_MAP[c], t + ' → 关联编号无效 ' + c));
+  });
+});
+spec('D14 术语 pat 互不冲突且 id 唯一', () => {
+  const seen = {};
+  D.GLOSSARY.forEach(g => {
+    assert.ok(!seen[g.id], '术语 id 重复: ' + g.id);
+    seen[g.id] = 1;
+    (g.pat || [g.term]).forEach(p => {
+      const k = /^[A-Za-z0-9]/.test(p) ? p.toLowerCase() : p;
+      assert.ok(!seen['pat:' + k] || seen['pat:' + k] === g.id, 'pat 冲突: ' + k);
+      seen['pat:' + k] = g.id;
+    });
+  });
+});
+
 /* ---------- E. 搜索评分 ---------- */
 spec('E1 编号精确匹配排名第一', () => {
   const scored = D.RISKS.map(r => ({ r, s: r.code.toLowerCase().startsWith('llm01') ? 10 : 0 })).sort((a, b) => b.s - a.s);

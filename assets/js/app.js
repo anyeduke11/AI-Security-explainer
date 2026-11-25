@@ -33,14 +33,35 @@
   function pct(a, b) { return b ? Math.round(a / b * 100) : 0; }
 
   /* ---------------- 状态 ---------------- */
+  /* 三维度进度：read 读懂 / ranged 练过 / quiz 答对（ROADMAP P0-2） */
+  var CARDS = NS.cards || { all: function (c) { return c || []; }, sm2: function (p) { return p; }, blank: function () { return {}; }, isDue: function () { return true; }, gradeOf: function () { return 1; } };
+  var PRACTICAL = NS.practical || { list: [], byCode: {}, byCat: {}, score: function () { return { score: 0, pass: false }; }, total: 0 };
   function defaults() {
-    return { read: {}, visited: {}, mini: {}, theme: 'light', quiz: { total: 0, right: 0, wrong: {} } };
+    return {
+      read: {}, visited: {}, mini: {}, ranged: {}, theme: 'light',
+      quiz: { total: 0, right: 0, wrong: {}, ok: {} },
+      /* 记忆卡片：SM-2 复习状态 + 用户自建卡片 + 连续天数 */
+      cards: { reviews: {}, custom: [], streak: 0, lastDay: '', dailyGoal: 20 },
+      /* 实操题：答题记录与错题 */
+      practical: { total: 0, passed: 0, attempts: {}, wrong: {} }
+    };
   }
   var S;
   try {
     S = Object.assign(defaults(), JSON.parse(localStorage.getItem(STORE_KEY) || '{}'));
     S.read = S.read || {}; S.visited = S.visited || {}; S.mini = S.mini || {};
-    S.quiz = Object.assign({ total: 0, right: 0, wrong: {} }, S.quiz || {});
+    /* 旧用户 localStorage 无 ranged 键时兜底为空对象，不报错 */
+    S.ranged = S.ranged || {};
+    S.quiz = Object.assign({ total: 0, right: 0, wrong: {}, ok: {} }, S.quiz || {});
+    S.quiz.wrong = S.quiz.wrong || {};
+    S.quiz.ok = S.quiz.ok || {};
+    /* v0.1.0 迁移：补齐记忆与实操状态，不覆盖已有记录 */
+    S.cards = Object.assign({ reviews: {}, custom: [], streak: 0, lastDay: '', dailyGoal: 20 }, S.cards || {});
+    S.cards.reviews = S.cards.reviews || {};
+    S.cards.custom = Array.isArray(S.cards.custom) ? S.cards.custom : [];
+    S.practical = Object.assign({ total: 0, passed: 0, attempts: {}, wrong: {} }, S.practical || {});
+    S.practical.attempts = S.practical.attempts || {};
+    S.practical.wrong = S.practical.wrong || {};
   } catch (e) { S = defaults(); }
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* 隐私模式下忽略 */ }
@@ -49,7 +70,7 @@
   /* MCP 编号零填充迁移（MCP1→MCP01 等）：老进度记录在新编号下继续可用 */
   var CODE_MIGRATE = { MCP1: 'MCP01', MCP2: 'MCP02', MCP4: 'MCP04', MCP5: 'MCP05', MCP6: 'MCP06', MCP8: 'MCP08', MCP9: 'MCP09' };
   function migrateCodes() {
-    ['read', 'visited', 'mini'].forEach(function (k) {
+    ['read', 'visited', 'mini', 'ranged'].forEach(function (k) {
       var box = S[k] || {};
       Object.keys(CODE_MIGRATE).forEach(function (oldId) {
         if (box[oldId] !== undefined) {
@@ -66,9 +87,67 @@
         }
       });
     }
+    /* 迁移后的新结构（ranged / quiz.ok）落盘，避免每次刷新重复迁移 */
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* 隐私模式下忽略 */ }
   }
   function learnedCount() { return Object.keys(S.read).length; }
   function learnedInCat(id) { return D.byCat(id).filter(function (r) { return S.read[r.code]; }).length; }
+  /* 练过（靶场闭环完成）计数：只统计有效风险编号 */
+  function rangedCount() {
+    return Object.keys(S.ranged).filter(function (c) { return RISK_MAP[c]; }).length;
+  }
+  function rangedInCat(id) {
+    return D.byCat(id).filter(function (r) { return S.ranged[r.code]; }).length;
+  }
+  /* 答对（随堂题 / 测验中心正确）条目数：以 quiz.ok 记账（每条风险答对过即计 1） */
+  function quizAnsweredCount() {
+    return Object.keys(S.quiz.ok).filter(function (c) { return RISK_MAP[c]; }).length;
+  }
+  function quizAnsweredInCat(id) {
+    return D.byCat(id).filter(function (r) { return S.quiz.ok[r.code]; }).length;
+  }
+  /* ---------------- 记忆卡片 / 实操 统计工具 ---------------- */
+  function allCards() { return CARDS.all(S.cards.custom); }
+  function cardMap() { var m = {}; allCards().forEach(function (c) { m[c.id] = c; }); return m; }
+  function dueCardCount() {
+    var now = Date.now();
+    return allCards().filter(function (c) { return CARDS.isDue(S.cards.reviews[c.id], now); }).length;
+  }
+  function cardMasteredCount() {
+    return allCards().filter(function (c) {
+      var s = S.cards.reviews[c.id]; return s && s.reps >= 3;
+    }).length;
+  }
+  function practicalPassedCount() {
+    return Object.keys(S.practical.attempts).filter(function (k) {
+      var a = S.practical.attempts[k]; return a && a.pass;
+    }).length;
+  }
+  function todayStr() {
+    var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  function bumpStreak() {
+    var t = todayStr();
+    if (S.cards.lastDay === t) return;
+    var y = new Date(Date.now() - 86400000);
+    var ys = y.getFullYear() + '-' + ('0' + (y.getMonth() + 1)).slice(-2) + '-' + ('0' + y.getDate()).slice(-2);
+    S.cards.streak = S.cards.lastDay === ys ? (S.cards.streak || 0) + 1 : 1;
+    S.cards.lastDay = t;
+  }
+  /* 靶场闭环完成回调（由 demos.js 的 onRangeComplete 触发） */
+  function onRangeComplete(code, info) {
+    if (!RISK_MAP[code]) return;
+    var prev = S.ranged[code];
+    S.ranged[code] = {
+      at: Date.now(),
+      predict: info && info.predict ? info.predict : null,
+      truth: info && info.truth ? info.truth : null,
+      hit: !!(info && info.hit),
+      times: (prev && prev.times ? prev.times : 0) + 1
+    };
+    save();
+  }
+  if (NS.demos) NS.demos.onRangeComplete = onRangeComplete;
   function totalPathSteps() { return PATHS.reduce(function (a, p) { return a + p.steps.length; }, 0); }
   function donePathSteps() {
     return PATHS.reduce(function (a, p) { return a + p.steps.filter(function (x) { return S.read[x.code]; }).length; }, 0);
@@ -120,12 +199,17 @@
         donePathSteps() + '/' + totalPathSteps()) +
       navLink('#/transformer', 'i-bolt', 'Transformer 攻防透视', route.view === 'transformer') +
       '</div>';
-    html += '<div class="nav-group"><div class="nav-title">' + CATS.length + ' 大知识域 · ' + RISKS.length + ' 条风险</div>';
+    html += '<div class="nav-group"><div class="nav-title">' + CATS.length + ' 大知识域 · ' + RISKS.length + ' 条风险</div>' +
+      '<div class="nav-sub-totals" style="' + PROGRESS_CSS.navTotals + '" title="读懂 / 练过 / 答对 三维度进度">读懂 ' + learnedCount() + '/' + RISKS.length +
+      ' · 练过 ' + rangedCount() + '/' + RISKS.length +
+      ' · 答对 ' + quizAnsweredCount() + '/' + RISKS.length + '</div>';
     CATS.forEach(function (c) {
       var list = D.byCat(c.id);
       html += '<a class="nav-link' + (activeCat === c.id ? ' active' : '') + '" href="#/cat/' + c.id + '" style="--cat:' + c.color + '">' +
         '<span class="nav-dot"></span><span>' + esc(c.short) + '</span>' +
-        '<span class="nav-count">' + learnedInCat(c.id) + '/' + list.length + '</span></a>';
+        '<span class="nav-count" title="读懂 ' + learnedInCat(c.id) + ' · 练过 ' + rangedInCat(c.id) + ' · 答对 ' + quizAnsweredInCat(c.id) + '（本域共 ' + list.length + ' 条）">' +
+        '练过 ' + rangedInCat(c.id) + '/' + list.length +
+        '</span></a>';
       if (activeCat === c.id) {
         html += '<div class="nav-sub">' + list.map(function (r) {
           return '<a class="nav-risk' + (S.read[r.code] ? ' done' : '') + (route.param === r.code ? ' active' : '') +
@@ -133,8 +217,14 @@
         }).join('') + '</div>';
       }
     });
-    html += '</div><div class="nav-group"><div class="nav-title">检验与记录</div>' +
+    html += '</div><div class="nav-group"><div class="nav-title">记忆</div>' +
+      navLink('#/cards', 'i-book', '知识卡片', route.view === 'cards', dueCardCount() ? '待复习 ' + dueCardCount() : '') +
+      navLink('#/cards?view=mine', 'i-target', '我的卡片', route.view === 'cards' && route.query.view === 'mine',
+        S.cards.custom.length ? String(S.cards.custom.length) : '') +
+      '</div><div class="nav-group"><div class="nav-title">检验与记录</div>' +
       navLink('#/quiz', 'i-quiz', '测验中心', route.view === 'quiz') +
+      navLink('#/quiz?type=practical', 'i-bolt', '实操题', route.view === 'quiz' && route.query.type === 'practical',
+        String(PRACTICAL.total)) +
       navLink('#/progress', 'i-chart', '我的学习进度', route.view === 'progress') +
       '</div>';
     $('#sideNav').innerHTML = html;
@@ -341,7 +431,7 @@
   function viewTransformer(code) {
     var hasCode = !!(code && RISK_MAP[code]);
     /* 演示文件改版时递增 TX_VERSION，避免 iframe 命中浏览器缓存加载旧版 */
-    var TX_VERSION = '20261119';
+    var TX_VERSION = '20261125';
     var src = 'demos/transformer-attack-explainer.html?v=' + TX_VERSION + (hasCode ? '&risk=' + encodeURIComponent(code) : '');
     return '<div class="page"><div class="page-head"><div class="eyebrow">模型内部 · 交互实验</div>' +
       '<h1>Transformer 攻防透视</h1>' +
@@ -429,6 +519,14 @@
   }
 
   /* ---------------- 页面：风险详情 ---------------- */
+  /* 随堂小测的展示序洗牌（判定仍用 r.quiz.a 原始索引） */
+  function miniQuizHTML(r) {
+    var disp = displayOrder(r.quiz.o);
+    return '<div class="card mini-quiz" data-mini-quiz data-mini-order="' + disp.order.join(',') + '"><h3>' + esc(r.quiz.q) + '</h3>' +
+      '<div class="choice-grid">' + disp.items.map(function (o, i) {
+        return '<button type="button" class="choice" data-opt="' + i + '" data-orig="' + disp.order[i] + '"><span class="choice-key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
+      }).join('') + '</div><div data-mini-result></div></div>';
+  }
   function viewRisk(code) {
     var r = RISK_MAP[code];
     if (!r) return viewNotFound();
@@ -487,7 +585,9 @@
               return rr ? '<a href="#/risk/' + code + '">' + esc(code) + ' ' + esc(rr.title) + '</a>' : '';
             }).join('') + '</div>'
           : '') +
-        '<div class="kc-jump"><a href="#/quiz?cat=' + r.cat + '">随堂小测</a><a href="#sec-3" data-scroll="sec-3">动手试一试</a><a href="#/lab?stage=' + (r.stages[0] ? D.STAGE_MAP[r.stages[0]].no : 1) + '&risk=' + r.code + '">攻击路径</a></div>' +
+        '<div class="kc-jump"><a href="#/quiz?cat=' + r.cat + '">随堂小测</a><a href="#/cards?cat=' + r.cat + '">记忆卡片</a>' +
+          (PRACTICAL.list.some(function (t) { return t.risk === r.code; }) ? '<a href="#/quiz?type=practical&cat=' + r.cat + '">实操题</a>' : '') +
+          '<a href="#sec-3" data-scroll="sec-3">动手试一试</a><a href="#/lab?stage=' + (r.stages[0] ? D.STAGE_MAP[r.stages[0]].no : 1) + '&risk=' + r.code + '">攻击路径</a></div>' +
       '</div>' +
       '<div class="detail-layout"><div>' +
         '<section class="section" id="sec-0" style="margin-top:0"><div class="card card-pad" style="border-left:3px solid var(--cat)">' +
@@ -520,10 +620,7 @@
         '<section class="section" id="sec-5"><div class="section-title"><span class="sec-no">05</span>典型场景</div>' +
           '<div class="scenario">' + gl(esc(r.scenario)) + '</div></section>' +
         '<section class="section" id="sec-6"><div class="section-title"><span class="sec-no">06</span>随堂小测</div>' +
-          '<div class="card mini-quiz" data-mini-quiz><h3>' + esc(r.quiz.q) + '</h3>' +
-            '<div class="choice-grid">' + r.quiz.o.map(function (o, i) {
-              return '<button type="button" class="choice" data-opt="' + i + '"><span class="choice-key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
-            }).join('') + '</div><div data-mini-result></div></div></section>' +
+          miniQuizHTML(r) + '</section>' +
         '<div class="pager">' +
           (prev ? '<a class="btn" href="#/risk/' + prev.code + '"><span>← ' + esc(prev.code) + ' ' + esc(prev.title) + '</span></a>' : '<span></span>') +
           (next ? '<a class="btn" href="#/risk/' + next.code + '"><span>' + esc(next.code) + ' ' + esc(next.title) + ' →</span></a>' : '<span></span>') +
@@ -569,14 +666,17 @@
       var b = e.target.closest('[data-opt]');
       if (!b || quizBox.dataset.answered) return;
       quizBox.dataset.answered = '1';
-      var pick = +b.dataset.opt, right = r.quiz.a === pick;
-      $$('[data-opt]', quizBox).forEach(function (x, i) {
+      var pick = b.dataset.orig !== undefined ? +b.dataset.orig : +b.dataset.opt;
+      var right = r.quiz.a === pick;
+      $$('[data-opt]', quizBox).forEach(function (x) {
+        var orig = x.dataset.orig !== undefined ? +x.dataset.orig : +x.dataset.opt;
         x.disabled = true;
-        if (i === r.quiz.a) x.classList.add('correct');
-        else if (i === pick) x.classList.add('wrong');
+        if (orig === r.quiz.a) x.classList.add('correct');
+        else if (orig === pick) x.classList.add('wrong');
       });
       $('[data-mini-result]', quizBox).innerHTML = '<div class="quiz-explain"><b>' + (right ? '答对了。' : '再想一想。') + '</b> ' + gl(esc(r.quiz.e)) + '</div>';
       S.mini[r.code] = right ? 1 : 0;
+      if (right) S.quiz.ok[r.code] = (S.quiz.ok[r.code] || 0) + 1;
       save();
       if (right) markRead(r.code, true);
     });
@@ -627,49 +727,91 @@
       cat: o.cat || 'all',
       level: o.level || 'all',
       count: String(o.count || '5'),
-      mode: o.mode === 'wrong' ? 'wrong' : 'normal'
+      mode: o.mode === 'wrong' ? 'wrong' : 'normal',
+      type: o.type === 'practical' ? 'practical' : 'choice'
     };
   }
   function quizSignature(o) {
     var q = quizNormalize(o);
-    return [q.cat, q.level, q.count, q.mode].join('|');
+    return [q.cat, q.level, q.count, q.mode, q.type].join('|');
   }
-  function quizFind(code) { return ALL_BANK.byCode[code]; }
+  function quizFind(code) { return ALL_BANK.byCode[code] || PRACTICAL.byCode[code]; }
+  function quizIsPractical(t) { return !!(t && t.options && t.key && t.code.indexOf('P-') === 0); }
+  /* 可注入随机源：默认 Math.random；给定种子则产出可复现的伪随机序列（测试用） */
+  function makeRng(seed) {
+    if (typeof seed === 'function') return seed;
+    if (seed == null) return Math.random;
+    var s = (typeof seed === 'number' ? seed : 0) >>> 0;
+    if (typeof seed === 'string') {
+      for (var i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) >>> 0;
+    }
+    return function () {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  }
   function quizPool(o) {
-    var list = ALL_BANK.list.slice();
+    var practical = o.type === 'practical';
+    var list = practical ? PRACTICAL.list.slice() : ALL_BANK.list.slice();
     if (o.cat && o.cat !== 'all') list = list.filter(function (r) { return r.cat === o.cat; });
     if (o.level && o.level !== 'all') list = list.filter(function (r) { return String(r.level) === o.level; });
     if (o.mode === 'wrong') {
-      var w = list.filter(function (r) { return S.quiz.wrong[r.code]; });
+      var wrongBox = practical ? S.practical.wrong : S.quiz.wrong;
+      var w = list.filter(function (r) { return wrongBox[r.code]; });
       if (w.length) list = w;
     }
     return list;
   }
-  function quizStart(o) {
+  /* ---------------- 洗牌（Fisher-Yates） ----------------
+   * 统一入口：可注入随机源（默认 Math.random），便于复现与测试；
+   * 禁止「随机数减 0.5 再排序」这类无偏性差的写法（正确项易聚集在同一位置）。 */
+  function shuffle(arr, rnd) {
+    var r = rnd || Math.random;
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(r() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  /* 展示序洗牌：返回 { items, order }，order[i] = 展示位 i 对应的原始索引
+   * 判定始终使用原始索引 r.quiz.a，避免洗牌后错判。 */
+  function displayOrder(opts, rnd) {
+    var n = (opts && opts.length) || 0;
+    var idx = [];
+    for (var i = 0; i < n; i++) idx.push(i);
+    var order = shuffle(idx, rnd);
+    return { items: order.map(function (i) { return opts[i]; }), order: order };
+  }
+  function quizStart(o, rnd) {
     o = quizNormalize(o);
     var pool = quizPool(o);
     if (!pool.length) { toast('没有符合条件的题目'); return; }
-    var shuffled = pool.slice().sort(function () { return Math.random() - 0.5; }).slice(0, +o.count || 5);
+    var random = makeRng(rnd);
+    var shuffled = shuffle(pool, random).slice(0, +o.count || 5);
     QS = { ids: shuffled.map(function (r) { return r.code; }), i: 0, right: 0, wrong: [], finished: false, o: o };
     render();
   }
   function quizView() {
     var q = parseHash().query;
     var qLevel = q.level || 'all', qCount = q.count || '5', qMode = q.mode === 'wrong' ? 'wrong' : 'normal';
-    var qCat = q.cat || 'all';
+    var qCat = q.cat || 'all', qType = q.type === 'practical' ? 'practical' : 'choice';
     var total = S.quiz.total, acc = total ? Math.round(S.quiz.right / total * 100) : 0;
-    var wrongCount = Object.keys(S.quiz.wrong).length;
+    var wrongCount = qType === 'practical' ? Object.keys(S.practical.wrong).length : Object.keys(S.quiz.wrong).length;
     var head = '<div class="page-head"><div class="eyebrow">检验理解</div><h1>测验中心</h1>' +
-      '<p class="lead">AI安全题库共 <b>' + ALL_BANK.list.length + '</b> 题，覆盖九大知识域。可按知识域、难度筛选，也可只重练错题；答题后立即给出解析。</p></div>' +
-      '<div class="quiz-stat-strip"><span><b>' + ALL_BANK.list.length + '</b>题库总题数</span><span><b>' + total + '</b>累计答题</span><span><b>' + acc + '%</b>正确率</span>' +
-        '<span><b>' + learnedCount() + '</b>已掌握条目</span><span><b>' + wrongCount + '</b>待复习错题</span></div>';
+      '<p class="lead">AI安全题库共 <b>' + ALL_BANK.list.length + '</b> 道单选题 + <b>' + PRACTICAL.total + '</b> 道实操题，覆盖九大知识域。单选题考「知道」，实操题考「做到」：完成配置、步骤或产物清单后按关键项与终态部分得分。</p></div>' +
+      '<div class="quiz-stat-strip"><span><b>' + ALL_BANK.list.length + '</b>单选总题数</span><span><b>' + PRACTICAL.total + '</b>实操题</span><span><b>' + total + '</b>累计答题</span><span><b>' + acc + '%</b>正确率</span>' +
+        '<span><b>' + practicalPassedCount() + '</b>实操通过</span><span><b>' + wrongCount + '</b>待复习错题</span></div>';
     if (!QS || QS.finished && QS.dismissed) {
       return '<div class="page">' + head +
         '<div class="card card-pad"><div class="section-title" style="margin-top:0"><span class="sec-no">01</span>选择范围</div>' +
+        '<div class="control-group"><label>题型</label><div class="seg" data-q-type>' +
+          '<button type="button" data-val="choice"' + (qType !== 'practical' ? ' class="active"' : '') + '>单选题（' + ALL_BANK.list.length + '）</button>' +
+          '<button type="button" data-val="practical"' + (qType === 'practical' ? ' class="active"' : '') + '>实操题（' + PRACTICAL.total + '）</button></div></div>' +
         '<div class="quiz-setup">' +
           '<div class="control-group"><label>知识域</label><div class="field"><select data-q-cat>' +
-            '<option value="all">全部知识域（' + ALL_BANK.list.length + '）</option>' + CATS.map(function (c) {
-              var n = ALL_BANK.list.filter(function (q) { return q.cat === c.id; }).length;
+            '<option value="all">全部知识域</option>' + CATS.map(function (c) {
+              var n = (qType === 'practical' ? PRACTICAL.byCat[c.id] || [] : ALL_BANK.list.filter(function (q) { return q.cat === c.id; })).length;
               return '<option value="' + c.id + '"' + (qCat === c.id ? ' selected' : '') + '>' + esc(c.short) + '（' + n + '）</option>';
             }).join('') +
           '</select></div></div>' +
@@ -688,10 +830,14 @@
         '<div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">' +
           '<button class="btn primary" type="button" data-q-start>开始测验 <svg class="ic"><use href="#i-arrow"></use></svg></button>' +
           (wrongCount ? '<button class="btn" type="button" data-q-wrong>只练错题（' + wrongCount + '）</button>' : '') +
-          '<span class="small muted">当前筛选可选 <b data-q-avail>' + quizPool({ cat: qCat, level: qLevel, mode: qMode }).length + '</b> 题</span>' +
+          '<span class="small muted">当前筛选可选 <b data-q-avail>' + quizPool({ cat: qCat, level: qLevel, mode: qMode, type: qType }).length + '</b> 题</span>' +
         '</div></div>' +
         '<div class="section"><div class="section-title"><span class="sec-no">02</span>测验怎么算</div>' +
-        '<div class="card card-pad small muted">每题单选，选择后立即显示正确答案与解析；答对的条目会自动计入学习进度，答错的进入错题本，可随时重练。所有记录只保存在本机浏览器。</div></div></div>';
+        '<div class="card card-pad small muted">' +
+          (qType === 'practical'
+            ? '实操题按「关键项命中 50% + 顺序正确 30% + 终态命中 20%」计分，禁用动作每项扣 15 分、查看提示扣 10 分；≥60 通过、≥85 熟练。判分是本地纯规则比对，不执行你输入的任何内容。'
+            : '每题单选，选择后立即显示正确答案与解析；答对的条目会自动计入学习进度，答错的进入错题本，可随时重练。') +
+          ' 所有记录只保存在本机浏览器。</div></div></div>';
     }
     if (QS.finished) return '<div class="page">' + head + quizResultHTML() + '</div>';
     return '<div class="page">' + head + quizQuestionHTML() + '</div>';
@@ -704,32 +850,64 @@
   function quizCatShort(r) {
     return D.CAT_MAP[r.cat] ? D.CAT_MAP[r.cat].short : '';
   }
+  function practicalQuestionHTML(t) {
+    var label = { config: '配置终态', steps: '有序步骤', output: '产物清单' }[t.type] || t.type;
+    var typeTip = t.type === 'steps' ? '请按处置顺序依次点击选项；顺序会计入评分。'
+      : t.type === 'config' ? '请选择你认为应启用的配置组合（可多选）。'
+      : '请选择应包含的内容项（可多选）。';
+    return '<div class="card quiz-card practical-card" data-practical-card data-p-code="' + esc(t.code) + '">' +
+      '<div class="quiz-progress"><span>第 ' + (QS.i + 1) + ' / ' + QS.ids.length + ' 题</span>' +
+        '<span class="qp-track"><i style="width:' + (QS.i / QS.ids.length * 100) + '%"></i></span>' +
+        '<span>' + esc(quizCatShort(t)) + ' · ' + esc(t.code) + '</span></div>' +
+      '<div class="pq-head"><span class="badge warn">' + esc(label) + '</span>' +
+        (RISK_MAP[t.risk] ? '<a class="badge" href="#/risk/' + t.risk + '">关联 ' + esc(t.risk) + ' ' + esc(RISK_MAP[t.risk].title) + '</a>' : '') + '</div>' +
+      '<div class="quiz-q">' + esc(t.title) + '</div>' +
+      '<p class="small muted pq-scene">' + esc(t.scene) + '</p>' +
+      '<p class="tiny muted">' + esc(typeTip) + '</p>' +
+      '<div class="pq-options">' + t.options.map(function (o, i) {
+        return '<button type="button" class="pq-opt" data-p-opt="' + esc(o.id) + '"><span class="pq-seq" data-p-seq hidden></span>' +
+          '<span>' + esc(o.label) + '</span><span class="pq-check">✓</span></button>';
+      }).join('') + '</div>' +
+      '<div class="pq-tools"><button class="btn ghost small" type="button" data-p-hint>查看提示（扣 10 分）</button>' +
+        '<span class="small muted" data-p-hint-text></span></div>' +
+      '<div data-q-feedback class="quiz-feedback"></div>' +
+      '<div class="quiz-nav"><a class="btn ghost small" href="#/quiz?type=practical" data-q-exit>退出本次测验</a>' +
+        '<button class="btn primary small" type="button" data-p-submit disabled>提交作答</button>' +
+        '<button class="btn primary small" type="button" data-q-next hidden>下一题 →</button></div></div>';
+  }
   function quizQuestionHTML() {
     var r = quizFind(QS.ids[QS.i]);
+    if (quizIsPractical(r)) return practicalQuestionHTML(r);
+    /* 展示序洗牌：打散正确项在选项中的固定位置；判定仍用原始索引 r.quiz.a */
+    var disp = displayOrder(r.quiz.o);
+    QS.dispOrder = disp.order;
     return '<div class="card quiz-card" data-quiz-card>' +
       '<div class="quiz-progress"><span>第 ' + (QS.i + 1) + ' / ' + QS.ids.length + ' 题</span>' +
         '<span class="qp-track"><i style="width:' + (QS.i / QS.ids.length * 100) + '%"></i></span>' +
         '<span>' + esc(quizCatShort(r)) + ' · ' + esc(r.code) + '</span></div>' +
       '<div class="quiz-q">' + esc(r.quiz.q) + '</div>' +
-      '<div class="quiz-options">' + r.quiz.o.map(function (o, i) {
-        return '<button type="button" class="choice" data-q-opt="' + i + '"><span class="choice-key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
+      '<div class="quiz-options">' + disp.items.map(function (o, i) {
+        return '<button type="button" class="choice" data-q-opt="' + i + '" data-q-orig="' + disp.order[i] + '"><span class="choice-key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
       }).join('') + '</div>' +
       '<div data-q-feedback class="quiz-feedback"></div>' +
       '<div class="quiz-nav"><a class="btn ghost small" href="#/quiz" data-q-exit>退出本次测验</a>' +
         '<button class="btn primary small" type="button" data-q-next disabled>下一题 →</button></div></div>';
   }
   function quizResultHTML() {
-    var n = QS.ids.length, p = pct(QS.right, n);
+    var n = QS.ids.length;
+    var practical = QS.o && QS.o.type === 'practical';
+    var p = practical ? pct(QS.right, n * 100) : pct(QS.right, n);
     return '<div class="card quiz-result"><div class="score-ring" style="--p:' + p + '%"><span>' + p + '</span></div>' +
-      '<h2>' + (p >= 80 ? '掌握得不错' : p >= 60 ? '继续巩固一下' : '建议回到引导路径复习') + '</h2>' +
-      '<p class="muted">答对 ' + QS.right + ' / ' + n + ' 题 · 正确率 ' + p + '%</p>' +
-      (QS.wrong.length ? '<div class="wrong-list"><b class="small">错题回顾</b>' + QS.wrong.map(function (code) {
+      '<h2>' + (practical ? (p >= 85 ? '实操熟练' : p >= 60 ? '实操通过' : '还需练习')
+        : p >= 80 ? '掌握得不错' : p >= 60 ? '继续巩固一下' : '建议回到引导路径复习') + '</h2>' +
+      '<p class="muted">' + (practical ? '实操平均得分 ' : '答对 ') + QS.right + ' / ' + n + ' 题 · ' + (practical ? '平均' : '') + '得分率 ' + p + '%</p>' +
+      (QS.wrong.length ? '<div class="wrong-list"><b class="small">' + (practical ? '未通过回顾' : '错题回顾') + '</b>' + QS.wrong.map(function (code) {
         var r = quizFind(code);
-        var inner = '<span class="rl-code">' + esc(code) + '</span><span>' + esc(r.title) + ' — ' + esc(r.quiz.e) + '</span>';
-        return RISK_MAP[code]
-          ? '<a href="#/risk/' + code + '">' + inner + '</a>'
-          : '<div>' + inner + '</div>';
-      }).join('') + '</div>' : '<p class="badge ok" style="margin-top:14px">全部答对，没有错题</p>') +
+        var detail = practical && QS.detail && QS.detail[code] ? QS.detail[code] : '';
+        var inner = '<span class="rl-code">' + esc(code) + '</span><span>' + esc(r.title || r.code) + (detail ? ' — ' + esc(detail) : (r.quiz && r.quiz.e ? ' — ' + esc(r.quiz.e) : '')) + '</span>' +
+          '<button class="btn ghost small" type="button" data-add-card="' + esc(code) + '">加入卡片</button>';
+        return '<div class="wrong-row">' + (RISK_MAP[code] ? '<a href="#/risk/' + code + '">' + inner + '</a>' : inner) + '</div>';
+      }).join('') + '</div>' : '<p class="badge ok" style="margin-top:14px">全部通过，没有错题</p>') +
       '<div style="margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">' +
         '<button class="btn primary" type="button" data-q-again>再来一组</button>' +
         '<button class="btn" type="button" data-q-back>返回设置</button>' +
@@ -739,30 +917,111 @@
     var startBtn = $('[data-q-start]');
     if (startBtn) {
       var modeBox = $('[data-q-mode]');
-      var mode = parseHash().query.mode === 'wrong' ? 'wrong' : 'normal';
+      var typeBox = $('[data-q-type]');
+      var query = parseHash().query;
+      var mode = query.mode === 'wrong' ? 'wrong' : 'normal';
+      var type = query.type === 'practical' ? 'practical' : 'choice';
       var availEl = $('[data-q-avail]');
       function refreshAvail() {
         if (!availEl) return;
-        var o = { cat: $('[data-q-cat]').value, level: $('[data-q-level]').value, mode: mode };
+        var o = { cat: $('[data-q-cat]').value, level: $('[data-q-level]').value, mode: mode, type: type };
         availEl.textContent = quizPool(o).length;
       }
-      modeBox.addEventListener('click', function (e) {
-        var b = e.target.closest('button[data-val]');
-        if (!b) return;
-        $$('button', modeBox).forEach(function (x) { x.classList.remove('active'); });
-        b.classList.add('active'); mode = b.dataset.val;
-        refreshAvail();
+      function bindSeg(box, cb) {
+        if (!box) return;
+        box.addEventListener('click', function (e) {
+          var b = e.target.closest('button[data-val]'); if (!b) return;
+          $$('button', box).forEach(function (x) { x.classList.remove('active'); });
+          b.classList.add('active'); cb(b.dataset.val); refreshAvail();
+        });
+      }
+      bindSeg(modeBox, function (v) { mode = v; });
+      bindSeg(typeBox, function (v) {
+        type = v;
+        var q = Object.assign({}, query); q.type = v;
+        if (v === 'choice') delete q.type;
+        go('#/quiz' + (Object.keys(q).length ? '?' + Object.keys(q).map(function (k) { return k + '=' + encodeURIComponent(q[k]); }).join('&') : ''));
       });
       ['[data-q-cat]', '[data-q-level]'].forEach(function (sel) {
-        var el = $(sel);
-        if (el) el.addEventListener('change', refreshAvail);
+        var el = $(sel); if (el) el.addEventListener('change', refreshAvail);
       });
       startBtn.addEventListener('click', function () {
-        quizStart({ cat: $('[data-q-cat]').value, level: $('[data-q-level]').value, count: $('[data-q-count]').value, mode: mode });
+        quizStart({ cat: $('[data-q-cat]').value, level: $('[data-q-level]').value, count: $('[data-q-count]').value, mode: mode, type: type });
       });
       var wbtn = $('[data-q-wrong]');
       if (wbtn) wbtn.addEventListener('click', function () {
-        quizStart({ cat: 'all', level: 'all', count: String(Math.min(20, Object.keys(S.quiz.wrong).length)), mode: 'wrong' });
+        var box = type === 'practical' ? S.practical.wrong : S.quiz.wrong;
+        quizStart({ cat: 'all', level: 'all', count: String(Math.min(20, Object.keys(box).length)), mode: 'wrong', type: type });
+      });
+    }
+    /* 实操题：多选 + 顺序 + 提交判分 */
+    var pc = $('[data-practical-card]');
+    if (pc) {
+      var t = quizFind(pc.dataset.pCode);
+      var picked = [];
+      var usedHint = false;
+      pc.addEventListener('click', function (e) {
+        var opt = e.target.closest('[data-p-opt]');
+        if (opt) {
+          var id = opt.dataset.pOpt;
+          var at = picked.indexOf(id);
+          if (at >= 0) { picked.splice(at, 1); opt.classList.remove('selected'); }
+          else { picked.push(id); opt.classList.add('selected'); }
+          if (t.type === 'steps') {
+            $$('[data-p-opt]', pc).forEach(function (x) { x.querySelector('[data-p-seq]').hidden = true; });
+            picked.forEach(function (pid, i) {
+              var b = $('[data-p-opt="' + pid + '"]', pc);
+              if (b) { var sq = b.querySelector('[data-p-seq]'); sq.textContent = i + 1; sq.hidden = false; }
+            });
+          }
+          $('[data-p-submit]', pc).disabled = !picked.length;
+          return;
+        }
+        var hint = e.target.closest('[data-p-hint]');
+        if (hint && !usedHint) {
+          usedHint = true;
+          $('[data-p-hint-text]', pc).textContent = t.hint || '先分输入侧、系统侧、出口侧三层来想。';
+          hint.disabled = true;
+          return;
+        }
+        var submit = e.target.closest('[data-p-submit]');
+        if (submit && picked.length && !pc.dataset.answered) {
+          pc.dataset.answered = '1';
+          var res = PRACTICAL.score(t, { picked: picked, hint: usedHint });
+          var pass = res.pass;
+          QS.right += res.score;
+          QS.detail = QS.detail || {};
+          QS.detail[t.code] = '得分 ' + res.score + '（关键项 ' + res.rates.steps + '% · 顺序 ' + res.rates.order + '% · 终态 ' + res.rates.target + '%）';
+          if (!res.miss.length && !res.bad.length && !res.extra.length) QS.detail[t.code] += '；完全命中';
+          else {
+            if (res.miss.length) QS.detail[t.code] += '；漏选 ' + res.miss.length + ' 项';
+            if (res.bad.length) QS.detail[t.code] += '；用了禁用动作';
+            if (res.extra.length) QS.detail[t.code] += '；多选 ' + res.extra.length + ' 项';
+          }
+          var first = S.practical.attempts[t.code];
+          S.practical.attempts[t.code] = {
+            score: Math.max(res.score, first ? first.score : 0),
+            last: res.score, pass: pass || (first && first.pass),
+            at: Date.now(), times: (first && first.times ? first.times : 0) + 1,
+            detail: QS.detail[t.code]
+          };
+          S.practical.total++;
+          if (pass) { S.practical.passed++; delete S.practical.wrong[t.code]; }
+          else { S.practical.wrong[t.code] = (S.practical.wrong[t.code] || 0) + 1; }
+          save();
+          $$('[data-p-opt]', pc).forEach(function (x) {
+            x.disabled = true;
+            if (t.key.indexOf(x.dataset.pOpt) >= 0) x.classList.add('correct');
+            else if (picked.indexOf(x.dataset.pOpt) >= 0) x.classList.add('wrong');
+          });
+          $('[data-q-feedback]', pc).innerHTML = '<div class="verdict ' + (pass ? 'ok' : 'bad') + '"><b>' +
+            (res.master ? '实操熟练 · ' : pass ? '实操通过 · ' : '未通过 · ') + res.score + ' 分</b>' +
+            esc(QS.detail[t.code]) + '。依据：' + esc(t.basis) + '</div>' +
+            (RISK_MAP[t.risk] ? '<a class="btn ghost small" style="margin-top:8px" href="#/risk/' + t.risk + '">回看风险 ' + esc(t.risk) + '</a>' : '');
+          submit.hidden = true;
+          var nb = $('[data-q-next]', pc); nb.hidden = false;
+          nb.textContent = QS.i + 1 >= QS.ids.length ? '查看结果 →' : '下一题 →';
+        }
       });
     }
     var again = $('[data-q-again]');
@@ -771,6 +1030,24 @@
     if (back) back.addEventListener('click', function () { QS.dismissed = true; render(); });
     var exit = $('[data-q-exit]');
     if (exit) exit.addEventListener('click', function (e) { e.preventDefault(); QS = null; render(); });
+    $$('[data-add-card]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var code = b.dataset.addCard;
+        var src = RISK_MAP[code] || PRACTICAL.byCode[code];
+        var pid = 'CU-from-' + code;
+        if (S.cards.custom.some(function (c) { return c.id === pid; })) { toast('这张卡片已在「我的卡片」里'); return; }
+        var front = src && src.quiz && src.quiz.q ? src.quiz.q : (src ? src.title : code);
+        var backText = src && src.quiz && src.quiz.e ? src.quiz.e : (src ? src.title : '');
+        S.cards.custom.unshift({
+          id: pid, code: code, cat: src && src.cat ? src.cat : 'custom',
+          front: front, back: backText, core: src && src.brief ? src.brief : '',
+          memory: '', basis: src && src.basis ? src.basis : '错题转化',
+          seeAlso: [], tags: ['机制'], level: src && src.level ? src.level : 1,
+          stage: '', custom: true
+        });
+        save(); toast('已加入「我的卡片」');
+      });
+    });
     var card = $('[data-quiz-card]');
     if (!card || !QS || QS.finished) return;
     var r = quizFind(QS.ids[QS.i]);
@@ -779,13 +1056,19 @@
       var b = e.target.closest('[data-q-opt]');
       if (!b || card.dataset.answered) return;
       card.dataset.answered = '1';
-      var pick = +b.dataset.opt, right = pick === r.quiz.a;
-      $$('[data-q-opt]', card).forEach(function (x, i) {
+      var pick = b.dataset.qOrig !== undefined ? +b.dataset.qOrig : +b.dataset.qOpt;
+      var right = pick === r.quiz.a;
+      $$('[data-q-opt]', card).forEach(function (x) {
+        var orig = x.dataset.qOrig !== undefined ? +x.dataset.qOrig : +x.dataset.qOpt;
         x.disabled = true;
-        if (i === r.quiz.a) x.classList.add('correct');
-        else if (i === pick) x.classList.add('wrong');
+        if (orig === r.quiz.a) x.classList.add('correct');
+        else if (orig === pick) x.classList.add('wrong');
       });
-      if (right) { QS.right++; delete S.quiz.wrong[r.code]; if (isSite) markRead(r.code, true); }
+      if (right) {
+        QS.right++; delete S.quiz.wrong[r.code];
+        if (isSite) S.quiz.ok[r.code] = (S.quiz.ok[r.code] || 0) + 1;
+        if (isSite) markRead(r.code, true);
+      }
       else { QS.wrong.push(r.code); S.quiz.wrong[r.code] = (S.quiz.wrong[r.code] || 0) + 1; }
       S.quiz.total++; S.quiz.right += right ? 1 : 0;
       save();
@@ -802,26 +1085,333 @@
     });
   }
 
+  /* ---------------- 页面：知识卡片（记忆 · 完整 SM-2） ---------------- */
+  var CARD_SEQ = null; /* { ids, i, mode } 复习队列 */
+  function cardView() {
+    var route = parseHash();
+    var view = route.query.view === 'mine' ? 'mine' : 'review';
+    var filter = {
+      cat: route.query.cat || 'all', tag: route.query.tag || 'all', level: route.query.level || 'all',
+      status: route.query.status || 'all'
+    };
+    var cards = allCards();
+    var now = Date.now();
+    var due = cards.filter(function (c) { return CARDS.isDue(S.cards.reviews[c.id], now); });
+    var mastered = cardMasteredCount();
+    var head = '<div class="page-head"><div class="eyebrow">记忆 · 间隔重复</div><h1>知识卡片</h1>' +
+      '<p class="lead">用完整 SM-2 算法安排复习：每张卡片按你的自评（忘了 / 模糊 / 记得）调整难度因子与下次到期时间。内置 <b>' + CARDS.builtin.length + '</b> 张覆盖全部风险，也支持新建自己的卡片。所有记录只保存在本机。</p></div>' +
+      '<div class="quiz-stat-strip"><span><b>' + due.length + '</b>今日待复习</span><span><b>' + mastered + '</b>已记住</span>' +
+        '<span><b>' + S.cards.streak + '</b>连续天数</span><span><b>' + S.cards.custom.length + '</b>自建卡片</span>' +
+        '<span><b>' + cards.length + '</b>卡片总数</span></div>';
+
+    if (CARD_SEQ && CARD_SEQ.ids.length) return '<div class="page">' + head + cardStudyHTML() + '</div>';
+
+    var filtered = cards.filter(function (c) {
+      if (view === 'mine' && !c.custom) return false;
+      if (filter.cat !== 'all' && c.cat !== filter.cat) return false;
+      if (filter.tag !== 'all' && (c.tags || []).indexOf(filter.tag) < 0) return false;
+      if (filter.level !== 'all' && String(c.level) !== filter.level) return false;
+      if (filter.status === 'due' && !CARDS.isDue(S.cards.reviews[c.id], now)) return false;
+      if (filter.status === 'mastered' && !(S.cards.reviews[c.id] && S.cards.reviews[c.id].reps >= 3)) return false;
+      if (filter.status === 'new' && S.cards.reviews[c.id]) return false;
+      return true;
+    });
+    var allTags = {};
+    cards.forEach(function (c) { (c.tags || []).forEach(function (t) { allTags[t] = 1; }); });
+    return '<div class="page">' + head +
+      '<div class="card card-pad"><div class="section-title" style="margin-top:0"><span class="sec-no">01</span>筛选范围</div>' +
+      '<div class="card-filters">' +
+        '<div class="control-group"><label>视图</label><div class="seg" data-card-view>' +
+          '<button type="button" data-val="review"' + (view !== 'mine' ? ' class="active"' : '') + '>全部卡片</button>' +
+          '<button type="button" data-val="mine"' + (view === 'mine' ? ' class="active"' : '') + '>只看自建</button></div></div>' +
+        '<div class="control-group"><label>知识域</label><div class="field"><select data-card-cat>' +
+          '<option value="all">全部（' + cards.length + '）</option>' + CATS.map(function (c) {
+            var n = cards.filter(function (x) { return x.cat === c.id; }).length;
+            return '<option value="' + c.id + '"' + (filter.cat === c.id ? ' selected' : '') + '>' + esc(c.short) + '（' + n + '）</option>';
+          }).join('') + '</select></div></div>' +
+        '<div class="control-group"><label>标签</label><div class="field"><select data-card-tag>' +
+          '<option value="all">全部标签</option>' + CARDS.TAGS.map(function (t) {
+            return '<option value="' + t + '"' + (filter.tag === t ? ' selected' : '') + '>' + t + '</option>';
+          }).join('') + '</select></div></div>' +
+        '<div class="control-group"><label>难度</label><div class="field"><select data-card-level>' +
+          '<option value="all">全部难度</option>' + [[1, '入门'], [2, '进阶'], [3, '挑战']].map(function (x) {
+            return '<option value="' + x[0] + '"' + (filter.level === String(x[0]) ? ' selected' : '') + '>' + x[1] + '</option>';
+          }).join('') + '</select></div></div>' +
+        '<div class="control-group"><label>复习状态</label><div class="field"><select data-card-status>' +
+          [['all', '全部'], ['due', '待复习'], ['new', '未学'], ['mastered', '已记住']].map(function (x) {
+            return '<option value="' + x[0] + '"' + (filter.status === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
+          }).join('') + '</select></div></div>' +
+      '</div>' +
+      '<div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">' +
+        '<button class="btn primary" type="button" data-card-start' + (filtered.length ? '' : ' disabled') + '>开始复习（' + filtered.length + '）</button>' +
+        '<button class="btn" type="button" data-card-new>＋ 新建卡片</button>' +
+        '<span class="small muted">当前筛选 <b>' + filtered.length + '</b> 张 · 今日上限 ' + S.cards.dailyGoal + ' 张</span></div>' +
+      '</div>' +
+      '<div class="section"><div class="section-title"><span class="sec-no">02</span>卡片一览<span class="sec-tip">翻转查看要点，点击「去练习」联动测验</span></div>' +
+      (filtered.length ? '<div class="card-grid">' + filtered.slice(0, 60).map(function (c) {
+        var st = S.cards.reviews[c.id];
+        var dueNow = CARDS.isDue(st, now);
+        return '<div class="mini-card" data-card-id="' + esc(c.id) + '" style="--cat:' + (D.CAT_MAP[c.cat] ? D.CAT_MAP[c.cat].color : 'var(--brand)') + '">' +
+          '<div class="mc-head"><span class="mc-id">' + esc(c.custom ? '自建' : c.code) + '</span>' +
+            '<span class="mc-state ' + (st && st.reps >= 3 ? 'ok' : dueNow ? 'warn' : '') + '">' + esc(CARDS.boxLabel(st)) + '</span></div>' +
+          '<div class="mc-front">' + esc(c.front) + '</div>' +
+          '<div class="mc-tags">' + (c.tags || []).map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>' +
+          '<div class="mc-actions"><button type="button" class="btn ghost small" data-card-flip>看答案</button>' +
+            (c.code && RISK_MAP[c.code] ? '<a class="btn ghost small" href="#/risk/' + c.code + '">看风险</a>' : '') +
+            (c.custom ? '<button type="button" class="btn ghost small" data-card-edit>编辑</button><button type="button" class="btn ghost small" data-card-del>删除</button>' : '') +
+          '</div><div class="mc-back" hidden>' + esc(c.back) + (c.memory ? '<div class="mc-mem">记忆锚：' + esc(c.memory) + '</div>' : '') + '</div></div>';
+      }).join('') + '</div>' + (filtered.length > 60 ? '<p class="small muted">仅显示前 60 张，可用筛选缩小范围。</p>' : '')
+        : '<div class="empty-state"><svg class="ic"><use href="#i-book"></use></svg><p>没有符合条件的卡片。换个筛选或新建一张。</p></div>') +
+      '</div>' + (CARD_EDITOR ? cardEditorHTML(CARD_EDITOR) : '') + '</div>';
+  }
+  function cardStudyHTML() {
+    var c = cardMap()[CARD_SEQ.ids[CARD_SEQ.i]];
+    if (!c) return '<div class="empty-state">卡片数据异常，<a href="#/cards">返回卡片列表</a></div>';
+    var st = S.cards.reviews[c.id];
+    return '<div class="study-card" data-study-card style="--cat:' + (D.CAT_MAP[c.cat] ? D.CAT_MAP[c.cat].color : 'var(--brand)') + '">' +
+      '<div class="study-top"><span>复习 ' + (CARD_SEQ.i + 1) + ' / ' + CARD_SEQ.ids.length + '</span>' +
+        '<span>' + esc(CARDS.boxLabel(st)) + ' · EF ' + (st ? st.ef.toFixed(2) : '2.50') + '</span></div>' +
+      '<div class="study-face"><span class="study-label">正面 · 回忆一下</span><h2>' + esc(c.front) + '</h2>' +
+        (c.tags || []).map(function (t) { return '<span class="badge">' + esc(t) + '</span>'; }).join('') + '</div>' +
+      '<button class="btn primary" type="button" data-study-show' + (CARD_SEQ.flipped ? ' hidden' : '') + '>显示答案</button>' +
+      '<div class="study-back"' + (CARD_SEQ.flipped ? '' : ' hidden') + '><span class="study-label">反面 · 对照</span>' +
+        '<p>' + esc(c.back) + '</p>' + (c.core ? '<p class="small muted">一句话：' + esc(c.core) + '</p>' : '') +
+        (c.memory ? '<p class="small">记忆锚：' + esc(c.memory) + '</p>' : '') +
+        '<p class="tiny muted">依据：' + esc(c.basis) + '</p>' +
+        '<div class="study-grade"><button class="btn" type="button" data-grade="forgot">忘了</button>' +
+          '<button class="btn" type="button" data-grade="fuzzy">模糊</button>' +
+          '<button class="btn primary" type="button" data-grade="remember">记得</button></div>' +
+        '<div style="margin-top:10px">' + (c.code && RISK_MAP[c.code] ? '<a class="btn ghost small" href="#/risk/' + c.code + '">看风险详情</a> ' : '') +
+          '<a class="btn ghost small" href="#/quiz?cat=' + (c.cat === 'custom' ? 'all' : c.cat) + '">去练习</a></div>' +
+      '</div></div>';
+  }
+  var CARD_EDITOR = null;
+  function cardEditorHTML(edit) {
+    return '<div class="section"><div class="section-title"><span class="sec-no">03</span>' + (edit.id ? '编辑卡片' : '新建卡片') + '</div>' +
+      '<div class="card card-pad"><div class="card-editor">' +
+        '<div class="control-group"><label>正面（问题）</label><div class="field"><input data-ce-front value="' + esc(edit.front || '') + '" placeholder="写一个能自测的问题"></div></div>' +
+        '<div class="control-group"><label>反面（答案）</label><div class="field"><textarea data-ce-back rows="3" placeholder="简明答案">' + esc(edit.back || '') + '</textarea></div></div>' +
+        '<div class="card-editor-row">' +
+          '<div class="control-group"><label>知识域</label><div class="field"><select data-ce-cat>' +
+            '<option value="custom">自建 / 通用</option>' + CATS.map(function (c) {
+              return '<option value="' + c.id + '"' + (edit.cat === c.id ? ' selected' : '') + '>' + esc(c.short) + '</option>';
+            }).join('') + '</select></div></div>' +
+          '<div class="control-group"><label>标签（逗号分隔）</label><div class="field"><input data-ce-tags value="' + esc((edit.tags || []).join(',')) + '" placeholder="机制,防护"></div></div>' +
+          '<div class="control-group"><label>记忆锚（可选）</label><div class="field"><input data-ce-memory value="' + esc(edit.memory || '') + '" placeholder="一个便于记住的比方"></div></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" type="button" data-ce-save>保存</button>' +
+          '<button class="btn" type="button" data-ce-cancel>取消</button></div>' +
+      '</div></div></div>';
+  }
+  function wireCards() {
+    var viewBox = $('[data-card-view]');
+    if (viewBox) viewBox.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-val]'); if (!b) return;
+      go(b.dataset.val === 'mine' ? '#/cards?view=mine' : '#/cards');
+    });
+    [['[data-card-cat]', 'cat'], ['[data-card-tag]', 'tag'], ['[data-card-level]', 'level'], ['[data-card-status]', 'status']].forEach(function (pair) {
+      var el = $(pair[0]); if (!el) return;
+      el.addEventListener('change', function () {
+        var route = parseHash(); var q = Object.assign({}, route.query);
+        q[pair[1]] = el.value;
+        if (q[pair[1]] === 'all') delete q[pair[1]];
+        go('#/cards' + (Object.keys(q).length ? '?' + Object.keys(q).map(function (k) { return k + '=' + encodeURIComponent(q[k]); }).join('&') : ''));
+      });
+    });
+    var start = $('[data-card-start]');
+    if (start) start.addEventListener('click', function () {
+      var now = Date.now();
+      var route = parseHash();
+      var pool = allCards().filter(function (c) {
+        if (route.query.view === 'mine' && !c.custom) return false;
+        if (route.query.cat && route.query.cat !== 'all' && c.cat !== route.query.cat) return false;
+        if (route.query.tag && route.query.tag !== 'all' && (c.tags || []).indexOf(route.query.tag) < 0) return false;
+        if (route.query.level && route.query.level !== 'all' && String(c.level) !== route.query.level) return false;
+        if (route.query.status === 'due' && !CARDS.isDue(S.cards.reviews[c.id], now)) return false;
+        if (route.query.status === 'mastered' && !(S.cards.reviews[c.id] && S.cards.reviews[c.id].reps >= 3)) return false;
+        if (route.query.status === 'new' && S.cards.reviews[c.id]) return false;
+        return true;
+      });
+      /* 待复习优先，其余按到期时间排序；受每日上限约束 */
+      pool.sort(function (a, b) {
+        var da = CARDS.isDue(S.cards.reviews[a.id], now) ? 0 : 1;
+        var db = CARDS.isDue(S.cards.reviews[b.id], now) ? 0 : 1;
+        return da - db || a.index - b.index;
+      });
+      var ids = pool.slice(0, +S.cards.dailyGoal || 20).map(function (c) { return c.id; });
+      if (!ids.length) { toast('没有符合条件的卡片'); return; }
+      CARD_SEQ = { ids: ids, i: 0, flipped: false };
+      render();
+    });
+    var newBtn = $('[data-card-new]');
+    if (newBtn) newBtn.addEventListener('click', function () { CARD_EDITOR = { id: '', front: '', back: '', cat: 'custom', tags: [], memory: '' }; render(); });
+    $$('[data-card-flip]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var el = b.closest('[data-card-id]'); var back = $('[data-card-id="' + el.dataset.cardId + '"] [data-card-back]');
+        var target = el.querySelector('.mc-back');
+        if (target) { target.hidden = !target.hidden; b.textContent = target.hidden ? '看答案' : '收起'; }
+        if (back) back.hidden = false;
+      });
+    });
+    $$('[data-card-edit]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var id = b.closest('[data-card-id]').dataset.cardId;
+        var c = S.cards.custom.filter(function (x) { return x.id === id; })[0];
+        if (c) { CARD_EDITOR = Object.assign({}, c); render(); }
+      });
+    });
+    $$('[data-card-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var id = b.closest('[data-card-id]').dataset.cardId;
+        if (!confirm('删除这张自建卡片？复习记录也会一并移除。')) return;
+        S.cards.custom = S.cards.custom.filter(function (x) { return x.id !== id; });
+        delete S.cards.reviews[id]; save(); render(); toast('已删除卡片');
+      });
+    });
+    var ceSave = $('[data-ce-save]');
+    if (ceSave) ceSave.addEventListener('click', function () {
+      var front = $('[data-ce-front]').value.trim(), back = $('[data-ce-back]').value.trim();
+      if (!front || !back) { toast('正面与反面都要填写'); return; }
+      var id = CARD_EDITOR.id || ('CU-' + Date.now().toString(36).toUpperCase());
+      var tags = $('[data-ce-tags]').value.split(/[,，]/).map(function (x) { return x.trim(); }).filter(Boolean);
+      var rec = {
+        id: id, code: CARD_EDITOR.code || '', cat: $('[data-ce-cat]').value,
+        front: front, back: back, core: CARD_EDITOR.core || '', memory: $('[data-ce-memory]').value.trim(),
+        basis: CARD_EDITOR.basis || '自建卡片', seeAlso: CARD_EDITOR.seeAlso || [],
+        tags: tags.length ? tags : ['机制'], level: CARD_EDITOR.level || 1, stage: CARD_EDITOR.stage || '', custom: true
+      };
+      if (CARD_EDITOR.id) S.cards.custom = S.cards.custom.map(function (x) { return x.id === id ? rec : x; });
+      else S.cards.custom.unshift(rec);
+      CARD_EDITOR = null; save(); render(); toast('卡片已保存');
+    });
+    var ceCancel = $('[data-ce-cancel]');
+    if (ceCancel) ceCancel.addEventListener('click', function () { CARD_EDITOR = null; render(); });
+
+    var study = $('[data-study-card]');
+    if (!study) return;
+    var show = $('[data-study-show]', study);
+    if (show) show.addEventListener('click', function () {
+      CARD_SEQ.flipped = true;
+      $('.study-back', study).hidden = false; show.hidden = true;
+    });
+    ['forgot', 'fuzzy', 'remember'].forEach(function (g) {
+      var btn = $('[data-grade="' + g + '"]', study);
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var id = CARD_SEQ.ids[CARD_SEQ.i];
+        var grade = CARDS.gradeOf(g);
+        S.cards.reviews[id] = CARDS.sm2(S.cards.reviews[id], grade);
+        bumpStreak(); save();
+        CARD_SEQ.i++; CARD_SEQ.flipped = false;
+        if (CARD_SEQ.i >= CARD_SEQ.ids.length) { CARD_SEQ = null; toast('本轮复习完成'); }
+        render();
+      });
+    });
+  }
+
   /* ---------------- 页面：进度 ---------------- */
+  /* 三维度主环：读懂 40% + 练过 40% + 答对 20% 加权（ROADMAP P0-2） */
+  var PROGRESS_WEIGHT = { read: 0.4, ranged: 0.4, quiz: 0.2 };
+  /* 三环与三段进度条的样式（内联，避免额外改动全局样式表） */
+  var PROGRESS_CSS = {
+    rings: 'display:flex;align-items:center;gap:14px;flex:none;flex-wrap:wrap;',
+    ring: 'width:108px;height:108px;border-radius:50%;flex:none;display:grid;place-items:center;position:relative;' +
+      'background:conic-gradient(var(--ringc) var(--p,0%), var(--surface-3) 0);',
+    ringInner: 'position:absolute;inset:11px;border-radius:50%;background:var(--surface);',
+    ringPct: 'position:relative;z-index:1;font:800 22px var(--mono);color:var(--ringc);',
+    ringLabel: 'position:absolute;z-index:1;bottom:20px;left:0;right:0;text-align:center;font-style:normal;font-size:10.5px;color:var(--ink-3);',
+    mastery: 'display:grid;gap:2px;padding-left:4px;',
+    masteryNum: 'font:800 26px var(--mono);color:var(--brand);',
+    masteryLabel: 'font-size:11.5px;color:var(--ink-3);',
+    bars: 'display:grid;gap:3px;',
+    bar: 'height:7px;border-radius:99px;background:var(--surface-3);overflow:hidden;',
+    barFill: 'display:block;height:100%;border-radius:99px;background:var(--cat);width:var(--w);transition:width .5s ease;',
+    navTotals: 'font:11px var(--mono);color:var(--ink-3);padding:0 10px 8px;line-height:1.5;'
+  };
+  function progressDims() {
+    var total = RISKS.length;
+    var read = learnedCount(), ranged = rangedCount(), quiz = quizAnsweredCount();
+    return {
+      read: read, ranged: ranged, quiz: quiz, total: total,
+      readP: pct(read, total), rangedP: pct(ranged, total), quizP: pct(quiz, total),
+      mastery: Math.round(
+        pct(read, total) * PROGRESS_WEIGHT.read +
+        pct(ranged, total) * PROGRESS_WEIGHT.ranged +
+        pct(quiz, total) * PROGRESS_WEIGHT.quiz
+      )
+    };
+  }
+  /* 靶场演练记录：已练过条数 + 平均预测命中率 */
+  function rangeStats() {
+    var rows = Object.keys(S.ranged).filter(function (c) { return RISK_MAP[c]; });
+    var withPredict = rows.filter(function (c) { return S.ranged[c] && S.ranged[c].predict; });
+    var hits = withPredict.filter(function (c) { return S.ranged[c].hit; }).length;
+    return {
+      count: rows.length,
+      predicted: withPredict.length,
+      hits: hits,
+      hitRate: withPredict.length ? Math.round(hits / withPredict.length * 100) : 0
+    };
+  }
   function viewProgress() {
-    var done = learnedCount(), total = RISKS.length;
+    var d = progressDims();
+    var total = d.total;
     var recent = Object.keys(S.visited).sort(function (a, b) { return S.visited[b] - S.visited[a]; }).slice(0, 8);
     var acc = S.quiz.total ? Math.round(S.quiz.right / S.quiz.total * 100) : 0;
+    var rs = rangeStats();
+    var ring = function (label, val, p, color) {
+      return '<div class="progress-ring" style="--p:' + p + '%;--ringc:' + color + ';' + PROGRESS_CSS.ring + '">' +
+        '<i style="' + PROGRESS_CSS.ringInner + '"></i>' +
+        '<span style="' + PROGRESS_CSS.ringPct + '">' + p + '%</span>' +
+        '<em style="' + PROGRESS_CSS.ringLabel + '">' + esc(label) + ' · ' + val + '/' + total + '</em></div>';
+    };
     return '<div class="page"><div class="page-head"><div class="eyebrow">本地记录</div><h1>我的学习进度</h1>' +
-      '<p class="lead">进度、测验成绩与错题只保存在这台设备的浏览器里，不会上传。刷新页面不会丢失。</p></div>' +
-      '<div class="progress-hero"><div class="progress-ring" style="--p:' + pct(done, total) + '%"><span>' + pct(done, total) + '%</span></div>' +
+      '<p class="lead">进度分为三个维度：<b>读懂</b>（读了原理 + 随堂题答对）、<b>练过</b>（靶场完成「预测 → 攻击 → 观测」完整闭环）、<b>答对</b>（题目答对）。主环按 读懂 40% + 练过 40% + 答对 20% 加权。所有记录只保存在这台设备的浏览器里，不会上传。</p></div>' +
+      '<div class="progress-hero"><div class="progress-rings" style="' + PROGRESS_CSS.rings + '">' +
+        ring('读懂', d.read, d.readP, 'var(--brand)') +
+        ring('练过', d.ranged, d.rangedP, 'var(--warn)') +
+        ring('答对', d.quiz, d.quizP, 'var(--ok)') +
+        '<div class="progress-mastery" style="' + PROGRESS_CSS.mastery + '"><b style="' + PROGRESS_CSS.masteryNum + '">' + d.mastery + '%</b>' +
+        '<span style="' + PROGRESS_CSS.masteryLabel + '">综合掌握度</span></div>' +
+      '</div>' +
         '<div class="progress-stats">' +
-          '<div class="ps-stat"><b>' + done + ' / ' + total + '</b><span>已掌握风险条目</span></div>' +
+          '<div class="ps-stat"><b>' + d.read + ' / ' + total + '</b><span>读懂 · 已掌握风险条目</span></div>' +
+          '<div class="ps-stat"><b>' + d.ranged + ' / ' + total + '</b><span>练过 · 靶场闭环完成</span></div>' +
+          '<div class="ps-stat"><b>' + d.quiz + ' / ' + total + '</b><span>答对 · 测验答对条目</span></div>' +
           '<div class="ps-stat"><b>' + donePathSteps() + ' / ' + totalPathSteps() + '</b><span>引导路径完成步数</span></div>' +
           '<div class="ps-stat"><b>' + acc + '%</b><span>测验正确率（' + S.quiz.total + ' 题）</span></div>' +
         '</div></div>' +
-      '<div class="section"><div class="section-title"><span class="sec-no">01</span>各知识域进度</div>' +
+      '<div class="section"><div class="section-title"><span class="sec-no">01</span>各知识域进度<span class="sec-tip">三段小进度条：读懂 / 练过 / 答对</span></div>' +
         '<div class="card card-pad cat-progress">' + CATS.map(function (c) {
-          var l = D.byCat(c.id).length, d = learnedInCat(c.id);
-          return '<div class="cp-row" ' + catVar(c.id) + '><span>' + esc(c.short) + '</span>' +
-            '<span class="cp-bar"><i style="--w:' + pct(d, l) + '%"></i></span><span class="cp-num">' + d + '/' + l + '</span></div>';
+          var l = D.byCat(c.id).length;
+          var rd = learnedInCat(c.id), rg = rangedInCat(c.id), qz = quizAnsweredInCat(c.id);
+          return '<div class="cp-row" style="grid-template-columns:190px 1fr 92px;align-items:center;gap:12px;font-size:13px;" ' + catVar(c.id) + '><span>' + esc(c.short) + '</span>' +
+            '<span class="cp-bars" style="' + PROGRESS_CSS.bars + '">' +
+              '<span class="cp-bar" title="读懂 ' + rd + '/' + l + '" style="' + PROGRESS_CSS.bar + '"><i style="' + PROGRESS_CSS.barFill + ';--w:' + pct(rd, l) + '%"></i></span>' +
+              '<span class="cp-bar" title="练过 ' + rg + '/' + l + '" style="' + PROGRESS_CSS.bar + '"><i style="' + PROGRESS_CSS.barFill + ';--w:' + pct(rg, l) + '%;background:var(--warn)"></i></span>' +
+              '<span class="cp-bar" title="答对 ' + qz + '/' + l + '" style="' + PROGRESS_CSS.bar + '"><i style="' + PROGRESS_CSS.barFill + ';--w:' + pct(qz, l) + '%;background:var(--ok)"></i></span>' +
+            '</span>' +
+            '<span class="cp-num">' + rd + '·' + rg + '·' + qz + ' / ' + l + '</span></div>';
         }).join('') + '</div></div>' +
-      '<div class="section"><div class="section-title"><span class="sec-no">02</span>掌握等级分布<span class="sec-tip">按课程要求分级统计已学条目</span></div>' +
+      '<div class="section"><div class="section-title"><span class="sec-no">02</span>靶场演练记录<span class="sec-tip">动手实践的可见价值</span></div>' +
+        '<div class="card card-pad"><div class="kv">' +
+          '<div class="kv-cell"><div class="k">已练过条目</div><div class="v">' + rs.count + ' / ' + total + '</div></div>' +
+          '<div class="kv-cell"><div class="k">做过预测的条目</div><div class="v">' + rs.predicted + '</div></div>' +
+          '<div class="kv-cell"><div class="k">预测命中</div><div class="v ok">' + rs.hits + '</div></div>' +
+          '<div class="kv-cell"><div class="k">平均预测命中率</div><div class="v' + (rs.hitRate >= 60 ? ' ok' : '') + '">' + rs.hitRate + '%</div></div>' +
+        '</div>' +
+        '<p class="tiny muted" style="margin-top:12px">预测命中率 = 预测与实际结果一致的次数 ÷ 做过的预测次数。命中率低不是坏事——它指出你还需要在哪些防线的作用位置上加深理解。</p></div></div>' +
+      '<div class="section"><div class="section-title"><span class="sec-no">03</span>记忆与实操<span class="sec-tip">并列维度，不改变三维度主环权重</span></div>' +
+        '<div class="card card-pad"><div class="kv">' +
+          '<div class="kv-cell"><div class="k">待复习卡片</div><div class="v">' + dueCardCount() + ' / ' + allCards().length + '</div></div>' +
+          '<div class="kv-cell"><div class="k">已记住卡片（SM-2 记住≥3 次）</div><div class="v ok">' + cardMasteredCount() + '</div></div>' +
+          '<div class="kv-cell"><div class="k">连续复习天数</div><div class="v">' + (S.cards.streak || 0) + ' 天</div></div>' +
+          '<div class="kv-cell"><div class="k">自建卡片</div><div class="v">' + S.cards.custom.length + '</div></div>' +
+          '<div class="kv-cell"><div class="k">实操通过</div><div class="v">' + practicalPassedCount() + ' / ' + PRACTICAL.total + '</div></div>' +
+          '<div class="kv-cell"><div class="k">实操作答次数</div><div class="v">' + S.practical.total + '</div></div>' +
+        '</div><div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">' +
+          '<a class="btn small primary" href="#/cards">去复习卡片</a><a class="btn small" href="#/quiz?type=practical">练实操题</a></div></div></div>' +
+      '<div class="section"><div class="section-title"><span class="sec-no">04</span>掌握等级分布<span class="sec-tip">按课程要求分级统计已学条目</span></div>' +
         '<div class="card card-pad"><div style="display:flex;gap:10px;flex-wrap:wrap">' +
         [['必须掌握', 3], ['应掌握', 2], ['熟悉', 1]].map(function (m) {
           var all = RISKS.filter(function (r) { return r.level === m[1]; }).length;
@@ -830,13 +1420,13 @@
         }).join('') + '</div>' +
         '<p class="tiny muted" style="margin-top:12px">必经步骤完成：' + donePathSteps() + ' / ' + totalPathSteps() + ' 步（引导路径全部步骤均建议完成，其中基础与合规阶段为必经）。</p></div></div>' +
       '<div class="section grid grid-2">' +
-        '<div><div class="section-title"><span class="sec-no">03</span>最近浏览</div>' +
+        '<div><div class="section-title"><span class="sec-no">05</span>最近浏览</div>' +
           (recent.length ? '<div class="recent-list">' + recent.map(function (code) {
             var r = RISK_MAP[code];
             return '<a href="#/risk/' + code + '" ' + catVar(r.cat) + '><span class="rl-code">' + esc(code) + '</span>' +
               '<span>' + esc(r.title) + '</span>' + (S.read[code] ? '<span class="badge ok">已学</span>' : '<span class="badge">浏览过</span>') + '</a>';
           }).join('') + '</div>' : '<div class="empty-state">还没有浏览记录，<a href="#/path">从引导路径开始</a></div>') + '</div>' +
-        '<div><div class="section-title"><span class="sec-no">04</span>记录管理</div>' +
+        '<div><div class="section-title"><span class="sec-no">06</span>记录管理</div>' +
           '<div class="card card-pad"><p class="small muted">数据保存在 localStorage（键名 <code class="mono">' + STORE_KEY + '</code>）。可以导出一份 JSON 备份，或清空后重新开始。</p>' +
           '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">' +
             '<button class="btn small" type="button" data-export>导出记录</button>' +
@@ -905,6 +1495,7 @@
       case 'path': html = viewPath(); break;
       case 'transformer': html = viewTransformer(route.param); wire = wireTransformer; break;
       case 'quiz': html = quizView(); wire = wireQuiz; break;
+      case 'cards': html = cardView(); wire = wireCards; break;
       case 'progress': html = viewProgress(); wire = wireProgress; break;
       case 'search': html = viewSearch(); break;
       default: html = viewNotFound();
@@ -977,7 +1568,11 @@
         S.visited[m.code] = Date.now();
         save();
       } else if (m.type === 'aisec-tx-quiz' && RISK_MAP[m.code]) {
-        if (m.correct) { S.mini[m.code] = 1; S.quiz.total++; S.quiz.right++; markRead(m.code, true); }
+        if (m.correct) {
+          S.mini[m.code] = 1; S.quiz.total++; S.quiz.right++;
+          S.quiz.ok[m.code] = (S.quiz.ok[m.code] || 0) + 1;
+          markRead(m.code, true);
+        }
         else { S.mini[m.code] = 0; S.quiz.total++; S.quiz.wrong[m.code] = (S.quiz.wrong[m.code] || 0) + 1; }
         save();
       }

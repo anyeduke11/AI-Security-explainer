@@ -792,12 +792,21 @@
   }
 
   /* ---------------------------------------------------------------
-   * 7b) range — 靶场演练：载荷构造 → 攻击执行 → 结果观测 → 防御复测 → 复盘
+   * 7b) range — 靶场演练：构造载荷 → 配置防御 → 先预测 → 发起攻击 → 观测输出 → 复盘
    * 数据源：data.js 的 SCRIPTS（与 Transformer 攻防透视共用同一份攻防剧本）。
-   * 靶场流程：侦察攻击面 → 构造载荷（基础/变形）→ 发起攻击 → 观测输出事实
-   *          → 逐层防御复测 → 复盘加固指向。
+   * 靶场流程：①构造载荷 ②配置防御 ③先预测 ④发起攻击 ⑤观测输出事实 ⑥复盘加固指向。
+   * 预测真值与实际结果同源：predictTruth(st) 直接复用 simulate() 的同一分支判定，
+   * 禁止出现第二套判定逻辑（ROADMAP P0-1 明文约束）。
    * ------------------------------------------------------------- */
   var SEG_LABEL = { doc: '检索文档', user: '用户输入', system: '系统指令' };
+  /* 预测闸门三项预测 ↔ simulate() 的 truth 字段一一对应（唯一真相来源） */
+  var PRED_OPTS = [['ok', '正常输出'], ['atk', '异常输出'], ['blocked', '被出口门禁拦截']];
+  var TRUTH_LABEL = { none: '无攻击（合法对照）', ok: '正常输出', atk: '异常输出', blocked: '被出口门禁拦截' };
+  var TRUTH_DIFF = {
+    ok: '载荷没能改变模型行为：输入侧检测命中，或系统侧指令分层压低了载荷段的影响，模型仍按业务目标作答。',
+    atk: '载荷穿过了输入侧与系统侧防线，模型把它当成指令执行，输出里出现了攻击者要求的内容。',
+    blocked: '载荷已经影响了模型生成，但出口门禁命中敏感模式并在输出离开应用前截断——内容没出去，属于出口兜底生效。'
+  };
   function engineRange(s0, d, risk) {
     var sp = (NS.data.SCRIPTS || {})[risk.code];
     if (!sp || !sp.gate) {
@@ -806,7 +815,8 @@
     }
     var defNames = sp.d || ['注入模式检测（输入侧）', '指令分层（系统侧）', '输出门禁（出口侧）'];
     var payloadSeg = sp.seg === 'user' ? 'user' : 'doc';
-    var st = { variant: 'base', D: { detect: false, layer: false, gate: false }, fired: false };
+    /* st.predict: 当前预测（null / 'ok' / 'atk' / 'blocked'）；st.predicted: 预测历史（幂等重测） */
+    var st = { variant: 'base', D: { detect: false, layer: false, gate: false }, fired: false, predict: null, predicted: [] };
 
     function markText(t) {
       var safe = esc(t);
@@ -844,21 +854,26 @@
       }
       return sp.tail && sp.tail[path] ? sp.tail[path] : '';
     }
-    /* 模拟规则：与 Transformer 攻防透视同一套攻防语义 */
+    /* 模拟规则：与 Transformer 攻防透视同一套攻防语义
+     * truth 是本配置下的唯一结果真相：'none' 无攻击 / 'ok' 正常输出 / 'atk' 异常输出 / 'blocked' 被出口门禁拦截。
+     * predictTruth() 直接调用本函数取 truth，不另写一套判定。 */
     function simulate() {
       var atk = st.variant !== 'benign';
       var deform = st.variant === 'deform';
       var m = ['lit', 'lit', 'lit', 'lit'];
       var path = 'ok', obs = [], verdict = null;
       var blocked = false, success = false;
+      var truth = 'none';
       var layerBlocks = st.D.layer && payloadSeg === 'doc';
       var detectCatches = st.D.detect && !deform;
       if (!atk) {
+        truth = 'none';
         obs.push('对照请求：无攻击载荷，模型按业务目标回答——这是靶场的基线。');
         verdict = ['ok', '对照基线', '同样的模型与上下文结构。切到注入载荷，观察每条防线的反应。'];
       } else {
         if (detectCatches) {
           m[0] = 'blocked';
+          truth = 'ok';
           obs.push('✓ ' + defNames[0] + '：命中注入特征并标记为不可信数据（概率性防线——变形载荷可绕过）。');
           path = 'ok';
           verdict = ['ok', '攻击未得手（输入侧拦截）', '载荷在进入模型前被标记，行为决策不再引用它。出口门禁仍是必要兜底。'];
@@ -867,6 +882,7 @@
           else if (!st.D.detect) obs.push('✗ 输入侧未开启：载荷未被标记，直接进入上下文。');
           if (layerBlocks) {
             m[1] = 'blocked';
+            truth = 'ok';
             obs.push('✓ ' + defNames[1] + '：跨信任层注意力被压低，载荷无法进入行为决策。');
             path = 'ok';
             verdict = ['ok', '攻击未得手（系统侧拦截）', '指令分层压低了文档段影响，行为决策回到业务目标。'];
@@ -877,11 +893,11 @@
             path = 'atk';
             var gateHit = sp.gate.test(rangeOut(sp, 'atk'));
             if (st.D.gate && gateHit) {
-              m[3] = 'blocked'; blocked = true;
+              m[3] = 'blocked'; blocked = true; truth = 'blocked';
               obs.push('✓ ' + defNames[2] + '：' + sp.gateHit + '，输出在出口被截断，内容未离开应用。');
               verdict = ['ok', '攻击被拦截（出口兜底）', '上游防线可能缺位或被绕过，但出口门禁守住了最后一道——纵深防御的价值在于层层兜底。'];
             } else {
-              m[3] = 'hot'; success = true;
+              m[3] = 'hot'; success = true; truth = 'atk';
               if (!st.D.gate) obs.push('✗ 输出门禁未开启：' + sp.pass);
               else obs.push('· 门禁开启但未命中该模式：漏网之鱼——判定规则需要持续演进。');
               verdict = ['bad', '攻击成功', sp.pass];
@@ -890,13 +906,21 @@
         }
       }
       var meterScore = !atk ? 100 : success ? 92 : blocked ? 24 : (detectCatches || layerBlocks) ? 16 : 60;
-      return { m: m, out: rangeOut(sp, path), obs: obs, verdict: verdict, blocked: blocked, success: success, atk: atk, meter: meterScore };
+      return { m: m, out: rangeOut(sp, path), obs: obs, verdict: verdict, blocked: blocked, success: success, atk: atk, meter: meterScore, truth: truth };
+    }
+    /* 预测真值：与 simulate() 完全同源（同一函数、同一分支），不存在第二套判定 */
+    function predictTruth() { return simulate().truth; }
+    /* 预测项与真值的等价判定：'none'（合法对照）不参与预测闸门 */
+    function predictMatches(pick, truth) {
+      if (!pick) return false;
+      if (truth === 'none') return false;
+      return pick === truth;
     }
     function render() {
       var res = st.fired ? simulate() : null;
       var pipe = ['输入侧 · ' + defNames[0].slice(0, 6), '系统侧 · ' + defNames[1].slice(0, 6), '模型生成', '出口侧 · ' + defNames[2].slice(0, 6)];
       var nodeState = res ? res.m : ['lit', 'lit', 'lit', 'lit'];
-      var nodeSub = res ? null : '待执行';
+      var benign = st.variant === 'benign';
       $('[data-result]', s.stage).innerHTML =
         '<div class="control-label">攻击面（侦察结果）</div>' +
         '<div class="rl-ctx">' + contextRows() + '</div>' +
@@ -912,9 +936,14 @@
             meter(res.meter, res.success ? '泄漏影响指数' : '攻击被遏制度') +
             '<ul class="rl-obs">' + res.obs.map(function (o) { return '<li>' + esc(o) + '</li>'; }).join('') + '</ul>' +
             verdict(res.verdict[0], res.verdict[1], res.verdict[2])
-          : '<div class="verdict ok" style="margin-top:12px"><b>靶场就绪</b>构造载荷、配置防御，然后点击「发起攻击」——输出事实会在这里如实呈现，不预判成败。</div>') +
+          : '<div class="verdict ok" style="margin-top:12px"><b>靶场就绪</b>' +
+            (benign
+              ? '当前是合法对照（无攻击载荷）：没有可预测的失败，因此不出现预测闸门。直接点击「发起攻击」查看基线输出。'
+              : '先在左侧「③ 预测」给出你的判断，再点击「发起攻击」——输出事实会在这里如实呈现，不预判成败。') +
+            '</div>') +
+        (res && st.fired ? compareHTML(res) : '') +
         (res && st.fired
-          ? '<div class="control-label" style="margin-top:12px">复盘 · 加固指向</div>' +
+          ? '<div class="control-label" style="margin-top:12px">⑥ 复盘 · 加固指向</div>' +
             '<ul class="defense-list">' + (risk.defense || []).map(function (x) {
               return '<li><svg class="ic"><use href="#i-check"></use></svg><span>' + gl(esc(x)) + '</span></li>';
             }).join('') + '</ul>' +
@@ -923,11 +952,60 @@
     }
     function update() {
       $('[data-payload]', s.controls).innerHTML = payloadPreview();
+      var slot = $('[data-predict-slot]', s.controls);
+      if (slot) slot.innerHTML = predictGateHTML();
+      updateFire();
       render();
+    }
+    /* 预测 vs 实际 对照条：答错时给出「你的预测 / 实际结果 / 差异原因」三段，不直接给答案 */
+    function compareHTML(res) {
+      if (!st.predict) {
+        return '<div class="control-label" style="margin-top:12px">预测 vs 实际</div>' +
+          '<div class="verdict warn"><b>本次未做预测</b>结果已如实呈现，但你没有在攻击前形成判断——先预测再验证，才是这个靶场真正要练的动作。</div>';
+      }
+      var truth = res.truth;
+      var hit = predictMatches(st.predict, truth);
+      var first = st.predicted.length ? st.predicted[0] : st.predict;
+      var rows = '<div class="kv">' +
+        '<div class="kv-cell"><div class="k">你的预测</div><div class="v' + (hit ? ' ok' : ' danger') + '">' + esc(TRUTH_LABEL[st.predict]) + '</div></div>' +
+        '<div class="kv-cell"><div class="k">实际结果</div><div class="v' + (hit ? ' ok' : ' danger') + '">' + esc(TRUTH_LABEL[truth]) + '</div></div>' +
+        '</div>';
+      var body = hit
+        ? '预测正确。你的判断与本次配置下的实际输出方向一致——说明你对该防线的作用位置与有效性有正确的心智模型。'
+        : '差异原因：' + (TRUTH_DIFF[truth] || '');
+      return '<div class="control-label" style="margin-top:12px">预测 vs 实际</div>' + rows +
+        '<div class="verdict ' + (hit ? 'ok' : 'warn') + '"><b>' + (hit ? '预测正确' : '预测与实际不一致') + '</b>' + esc(body) + '</div>' +
+        (first !== st.predict
+          ? '<p class="control-tip">首次预测为「' + esc(TRUTH_LABEL[first]) + '」，最终预测为「' + esc(TRUTH_LABEL[st.predict]) + '」。可以改答案并重新发起，复盘时对照两者。</p>'
+          : '') +
+        '<p class="control-tip">实际结果由同一套判定逻辑（simulate）推导，与预测真值同源——同一配置下二者零分歧。</p>';
+    }
+    /* 预测闸门卡片：合法对照（无攻击）态不出现，只有攻击态强制生效 */
+    function predictGateHTML() {
+      if (st.variant === 'benign') {
+        return '<div class="control-group full"><label>③ 预测（先预测再验证）</label>' +
+          '<div class="notice">当前为合法对照（无攻击载荷）——没有可预测的失败，因此不出现预测闸门。</div></div>';
+      }
+      var tip = st.predict
+        ? '已选择「' + esc(TRUTH_LABEL[st.predict]) + '」。可以改答案并重新发起攻击。'
+        : '先给出你的判断，再点击「发起攻击」——未选择预测时无法发起。';
+      return '<div class="control-group full"><label>③ 预测（先预测再验证）</label>' +
+        '<div class="notice">在当前配置下，你认为模型输出是？</div>' +
+        '<div class="seg" data-predict style="margin-top:8px">' + PRED_OPTS.map(function (o) {
+          return '<button type="button" data-val="' + o[0] + '"' + (st.predict === o[0] ? ' class="active"' : '') + '>' + esc(o[1]) + '</button>';
+        }).join('') + '</div>' +
+        '<p class="control-tip" data-predict-tip>' + esc(tip) + '</p></div>';
+    }
+    function updateFire() {
+      var b = $('[data-fire]', s.controls);
+      if (!b) return;
+      var needPredict = st.variant !== 'benign';
+      b.disabled = needPredict && !st.predict;
+      b.title = b.disabled ? '请先在「③ 预测」中给出判断' : '按当前配置发起一次攻击';
     }
     var s = shell(s0.root, {
       title: (d.title || risk.title) + ' · 靶场演练', typeLabel: 'RANGE LAB',
-      hint: '按靶场流程演练：①构造载荷（基础/变形）②配置防御 ③发起攻击 ④观测输出事实 ⑤复盘加固。所有执行均为本地规则模拟。',
+      hint: '按靶场流程演练：①构造载荷 ②配置防御 ③先预测 ④发起攻击 ⑤观测输出事实 ⑥复盘加固。所有执行均为本地规则模拟。',
       footNote: '靶场模拟器：载荷与模型行为均为规则化剧本，输入不会被发送、执行或存储。演练结论基于剧本判定，真实攻击面远比单一剧本复杂。',
       controls:
         '<div class="control-group full"><label>① 载荷构造</label>' +
@@ -937,25 +1015,51 @@
           sw(defNames.map(function (n, i) {
             return ['d' + i, n, ['输入侧：命中即标记为不可信数据（概率性）', '系统侧：压低跨信任层注意力', '出口侧：命中敏感模式立即截断'][i]];
           })) + '</div>' +
-        '<div class="control-group full"><label>③ 执行</label><div class="demo-actions">' +
+        '<div data-predict-slot></div>' +
+        '<div class="control-group full"><label>④ 执行</label><div class="demo-actions">' +
           '<button class="btn small primary" type="button" data-fire><svg class="ic"><use href="#i-bolt"></use></svg>发起攻击</button>' + resetBtn() + '</div>' +
           '<p class="control-tip">发起后切换防御开关会立即复测（等同重新发起一次请求）。</p></div>',
       stage: '<div data-result></div>'
     });
     $('[data-payload]', s.controls).innerHTML = payloadPreview();
-    bindSeg(s, 'variant', function (v) { st.variant = v; render(); });
+    bindSeg(s, 'variant', function (v) {
+      st.variant = v;
+      /* 载荷变了就是一道新题：清空预测与历史，避免旧判断套到新场景 */
+      st.predict = null; st.predicted = [];
+      update();
+    });
     bindLive(s, function () {
       var on = {};
       $$('input[data-sw]', s.controls).forEach(function (i) { on[i.dataset.sw] = i.checked; });
       st.D = { detect: !!on.d0, layer: !!on.d1, gate: !!on.d2 };
+      /* 防御配置变化＝重新发起一次请求：保留预测以便对照结果如何随防御变化 */
       if (st.fired) render();
     });
+    /* 预测选择：允许改答案并重测，历史留存在 st.predicted 供复盘对照 */
+    s.controls.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-predict] button[data-val]');
+      if (!b) return;
+      st.predict = b.dataset.val;
+      st.predicted.push(st.predict);
+      update();
+    });
     $('[data-fire]', s.controls).addEventListener('click', function () {
+      if (st.variant !== 'benign' && !st.predict) return;   /* 闸门：未预测不得发起 */
       st.fired = true;
+      var truth = predictTruth();
       render();
+      /* 闭环完成（预测 → 攻击 → 观测）通知宿主记账；benign 无预测闸门（ROADMAP P0-1 无载荷态），不计「练过」，避免用无预测记录覆盖先前预测快照 */
+      if (st.variant !== 'benign' && NS.demos && typeof NS.demos.onRangeComplete === 'function') {
+        NS.demos.onRangeComplete(risk.code, {
+          predict: st.predict,
+          truth: truth,
+          hit: predictMatches(st.predict, truth)
+        });
+      }
     });
     bindReset(s, function () {
       st.variant = 'base'; st.D = { detect: false, layer: false, gate: false }; st.fired = false;
+      st.predict = null; st.predicted = [];
       $$('input[data-sw]', s.controls).forEach(function (i) { i.checked = false; });
       var box = $('[data-seg="variant"]', s.controls);
       $$('button', box).forEach(function (b, i) { b.classList.toggle('active', i === 0); });

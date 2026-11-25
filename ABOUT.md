@@ -10,7 +10,7 @@ AI Security Explainer 是一个**面向零基础读者的交互式 AI 安全学�
 
 ## 当前版本
 
-**v0.1.0**（首个公开预览版）包含 **9 大知识域 / 152 条风险 / 785 道题**（152 条随堂题 + 633 道扩展题）与 7 阶段 44 步新手路径。当前版本仍在迭代中，版本说明与源码压缩包见 [GitHub Releases](https://github.com/anyeduke11/AI-Security-explainer/releases)。
+**v0.1.0**（首个公开预览版）包含 **9 大知识域 / 152 条风险 / 785 道单选题 / 54 道实操题 / 152 张内置知识卡片**与 7 阶段 44 步新手路径。知识卡片采用完整 SM-2 间隔重复并支持用户自建，实操题提供配置终态、有序步骤与产物清单三种作答形式与本地部分得分。当前版本仍在迭代中，版本说明与源码压缩包见 [GitHub Releases](https://github.com/anyeduke11/AI-Security-explainer/releases)。
 
 ## 联系方式与商业授权
 
@@ -29,7 +29,7 @@ AI Security Explainer 是一个**面向零基础读者的交互式 AI 安全学�
 
 | 路径 | 说明 |
 |---|---|
-| `index.html` + `assets/` | 可直接运行的静态站点（含 `assets/readme/` 下两张项目原生 README 图） |
+| `index.html` + `assets/` | 可直接运行的静态站点（含 `assets/js/cards.js` 与 `practical.js` 两个新数据模块，以及两张项目原生 README 图） |
 | `demos/` | 独立 Transformer 攻防透视页 |
 | `docs/` | 知识整合方案与验收要求 |
 | `scripts/` | 题库构建流水线与验证脚本（部分工具需外部源文件，不随仓库分发） |

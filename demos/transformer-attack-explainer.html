@@ -678,7 +678,7 @@ body.embedded .topbar { display: none; }
 </main>
 
 <!-- 知识库单一数据源：与主站共用 assets/js/data.js（改动知识库只需改 data.js，并同步递增本页 ?v= 与 app.js 的 TX_VERSION） -->
-<script src="../assets/js/data.js?v=20261118"></script>
+<script src="../assets/js/data.js?v=20261125"></script>
 <script src="../assets/js/glossary.js?v=20261114"></script>
 <script>
 'use strict';
@@ -900,6 +900,9 @@ body.embedded .topbar { display: none; }
       if (correct === true) {
         st.mini = st.mini || {}; st.mini[S.scn] = 1;
         st.read = st.read || {}; if (!st.read[S.scn]) st.read[S.scn] = Date.now();
+        /* 答对维度记账（与主站 app.js 的 quiz.ok 同口径） */
+        st.quiz = st.quiz || {}; st.quiz.ok = st.quiz.ok || {};
+        st.quiz.ok[S.scn] = (st.quiz.ok[S.scn] || 0) + 1;
       }
       localStorage.setItem('aisec-lab-v1', JSON.stringify(st));
     } catch (e) {}
@@ -920,6 +923,7 @@ body.embedded .topbar { display: none; }
     attackEff: false,
     detectHits: 0,
     mode: 'normal',   // 输入模式：normal=正常输入 / attack=异常输入（攻击）
+    quizOrder: null,  // 随堂题选项展示序（Fisher-Yates 洗牌，判分仍用原始索引）
     gen: [],          // 已采样 token
     genDone: false,
     blocked: false,
@@ -1809,7 +1813,7 @@ body.embedded .topbar { display: none; }
     S.mode = mode;
     S.edits = {};
     /* 切换模式即换了一批输入，旧的采样结果不再适用，重置生成与门禁状态 */
-    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null; S.quizOrder = null;
     recompute();
     renderAll();
   }
@@ -1817,13 +1821,13 @@ body.embedded .topbar { display: none; }
   function sendRequest() {
     stopAuto();
     recompute();
-    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null; S.quizOrder = null;
     setStage(1);
   }
   /* 发送下一请求：回到 S1 输入，保留当前场景与防御配置 */
   function sendNextRequest() {
     stopAuto();
-    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null; S.quizOrder = null;
     S.edits = {};
     recompute();
     setStage(0);
@@ -1874,7 +1878,7 @@ body.embedded .topbar { display: none; }
     if (cur) cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
   function resetRun(keepStage) {
-    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null;
+    S.gen = []; S.genDone = false; S.blocked = false; S.blockedTok = ''; S.lastSample = null; S.nonce = 0; S.quizPick = null; S.quizOrder = null;
     if (!keepStage) S.stage = 0;
     stopAuto();
     recompute();
@@ -2167,14 +2171,24 @@ body.embedded .topbar { display: none; }
     if (S.scn === 'benign' || !KB[S.scn]) return '';
     var q = KB[S.scn].q;
     var answered = S.quizPick !== null && S.quizPick !== undefined;
-    var opts = q[1].map(function (o, i) {
+    /* 展示序洗牌（Fisher-Yates）：消除原始数组顺序带来的正确项位置偏差；
+       S.quizOrder 存展示位→原始位的映射，判分仍用原始索引 q[2] */
+    if (!S.quizOrder) {
+      S.quizOrder = q[1].map(function (_, i) { return i; });
+      for (var i = S.quizOrder.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var t = S.quizOrder[i]; S.quizOrder[i] = S.quizOrder[j]; S.quizOrder[j] = t;
+      }
+    }
+    var opts = S.quizOrder.map(function (orig, disp) {
+      var o = q[1][orig];
       var cls = 'choice';
       if (answered) {
-        if (i === q[2]) cls += ' correct';
-        else if (i === S.quizPick) cls += ' wrong';
+        if (orig === q[2]) cls += ' correct';
+        else if (orig === S.quizPick) cls += ' wrong';
       }
-      return '<button type="button" class="' + cls + '" data-idx="' + i + '"' + (answered ? ' disabled' : '') + '>' +
-        '<span class="ckey">' + 'ABCD'.charAt(i) + '</span><span>' + esc(o) + '</span></button>';
+      return '<button type="button" class="' + cls + '" data-idx="' + orig + '"' + (answered ? ' disabled' : '') + '>' +
+        '<span class="ckey">' + 'ABCD'.charAt(disp) + '</span><span>' + esc(o) + '</span></button>';
     }).join('');
     return '<div class="quiz-card"><h4>随堂测验 · ' + esc(S.scn) + ' ' + esc(KB[S.scn].t) + '</h4>' +
       '<p class="quiz-sub">结合上面的流水线实验验证你的判断。</p>' +
