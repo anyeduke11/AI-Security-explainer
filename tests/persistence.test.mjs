@@ -16,7 +16,10 @@ const exc = { n: 0 };
 ws.addEventListener('message', e => { const m = JSON.parse(e.data); if (m.method === 'Runtime.exceptionThrown') exc.n++; });
 await cdp(ws, 'Runtime.enable'); await cdp(ws, 'Page.enable'); await cdp(ws, 'Network.enable');
 await cdp(ws, 'Network.setCacheDisabled', { cacheDisabled: true });
+/* headless CDP 下原生 confirm 会阻塞，注入自动确认以免 M3 清空进度卡死 */
+await cdp(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: 'window.confirm = function(){return true;};' });
 await cdp(ws, 'Page.navigate', { url: SITE + '#/home' });
+await cdp(ws, 'Runtime.evaluate', { expression: 'window.confirm = function(){return true;};' });
 await new Promise(r => setTimeout(r, 1500));
 const ev = async x => { const m = await cdp(ws, 'Runtime.evaluate', { expression: x, returnByValue: true, awaitPromise: true }); const d = m.result && m.result.exceptionDetails; if (d) return { __err: (d.exception && d.exception.description || d.text).slice(0, 140) }; return m.result && m.result.result ? m.result.result.value : undefined; };
 const goto = async h => { await ev(`location.hash='${h}'`); await new Promise(r => setTimeout(r, 400)); };
@@ -43,8 +46,9 @@ check('M3 清空进度后持久化状态归零', afterClear && Object.keys(after
 
 /* M4：父页应校验 iframe 消息来源 origin */
 const app = (await import('node:fs')).readFileSync(new URL('../assets/js/app.js', import.meta.url), 'utf8');
-const msgBlock = app.slice(app.indexOf("addEventListener('message'"), app.indexOf("addEventListener('hashchange'"));
-check('M4 postMessage 应校验来源 origin（当前为 '*'）', /event\.origin/.test(msgBlock) && !/\*/.test(msgBlock.slice(0, 200)), msgBlock.slice(0, 160).replace(/\s+/g, ' '));
+const msgStart = app.indexOf("addEventListener('message'");
+const msgBlock = app.slice(msgStart, msgStart + 500);
+check('M4 postMessage 应校验来源 origin 与 frame.source', /e\.origin\s*!==\s*TX_ORIGIN/.test(msgBlock) && /e\.source\s*!==\s*frame\.contentWindow/.test(msgBlock), msgBlock.slice(0, 160).replace(/\s+/g, ' '));
 
 /* M5：独立 Transformer 页与父页进度应口径一致 */
 const tx = (await import('node:fs')).readFileSync(new URL('../demos/transformer-attack-explainer.html', import.meta.url), 'utf8');

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="wf-title wf-desc">
-  <title id="wf-title">学习闭环：九大知识域 → 七种学习形式 → 五项配套功能 → 学习进度</title>
-  <desc id="wf-desc">四个阶段从左到右排列，由箭头连接，最后从学习进度返回知识域形成闭环。</desc>
+  <title id="wf-title">学习闭环：九大知识域 → 八种学习形式 → 六项配套功能 → 学习进度</title>
+  <desc id="wf-desc">四个阶段从左到右排列，由箭头连接，最后从学习进度返回知识域形成闭环；学习形式含实操题，配套功能含 SM-2 知识卡片。</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -28,23 +28,23 @@
     <g transform="translate(300 0)">
       <rect width="255" height="128" rx="16" fill="#111d38" stroke="#22304f" stroke-width="2"/>
       <text x="20" y="40" font-family="ui-monospace, monospace" font-size="18" fill="#7ba3ff">02 / LEARN</text>
-      <text x="20" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="42" font-weight="700" fill="#ffffff">7</text>
+      <text x="20" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="42" font-weight="700" fill="#ffffff">8</text>
       <text x="62" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="21" fill="#c2d0ea">种学习形式</text>
-      <text x="20" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#7d92bb">卡片 · 拆解 · 演示 · 小测</text>
+      <text x="20" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#7d92bb">卡片 · 拆解 · 演示 · 实操</text>
     </g>
     <g transform="translate(600 0)">
       <rect width="255" height="128" rx="16" fill="#111d38" stroke="#22304f" stroke-width="2"/>
       <text x="20" y="40" font-family="ui-monospace, monospace" font-size="18" fill="#7ba3ff">03 / PRACTICE</text>
-      <text x="20" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="42" font-weight="700" fill="#ffffff">5</text>
+      <text x="20" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="42" font-weight="700" fill="#ffffff">6</text>
       <text x="62" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="21" fill="#c2d0ea">项配套功能</text>
-      <text x="20" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#7d92bb">实验室 · 热度 · 路径 · 测验</text>
+      <text x="20" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#7d92bb">实验室 · 热度 · 记忆卡片</text>
     </g>
     <g transform="translate(900 0)">
       <rect width="255" height="128" rx="16" fill="#141a30" stroke="#dc4c43" stroke-width="2"/>
       <text x="20" y="40" font-family="ui-monospace, monospace" font-size="18" fill="#e88b84">04 / MEASURE</text>
       <text x="20" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="42" font-weight="700" fill="#ffffff">785</text>
       <text x="112" y="86" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="21" fill="#c2d0ea">题</text>
-      <text x="20" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#7d92bb">本地进度与错题本</text>
+      <text x="20" y="114" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="18" fill="#7d92bb">+ 54 实操 · 152 卡片</text>
     </g>
   </g>
 

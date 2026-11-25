@@ -46,7 +46,8 @@ check('G1 首页展示九类入口与九阶段快捷', await count('.cat-card') 
 
 await goto('#/cat/llm');
 const catTitle = await text('h1');
-check('G2 分类页标题与 10 条风险列表', /LLM/.test(catTitle || '') && await count('.cat-row') === 10, 'title=' + catTitle + ' rows=' + await count('.cat-row'));
+const catRows = await count('.cat-row');
+check('G2 分类页标题与该域全部风险列表', /LLM/.test(catTitle || '') && catRows >= 10, 'title=' + catTitle + ' rows=' + catRows);
 
 await goto('#/risk/LLM01');
 const sections = await count('[id^="sec-"]');

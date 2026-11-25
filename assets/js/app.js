@@ -90,7 +90,10 @@
     /* 迁移后的新结构（ranged / quiz.ok）落盘，避免每次刷新重复迁移 */
     try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { /* 隐私模式下忽略 */ }
   }
-  function learnedCount() { return Object.keys(S.read).length; }
+  /* 已学计数：过滤无效的 read key（旧存档/手工篡改可能写入不存在的 code） */
+  function learnedCount() {
+    return Object.keys(S.read).filter(function (code) { return RISK_MAP[code]; }).length;
+  }
   function learnedInCat(id) { return D.byCat(id).filter(function (r) { return S.read[r.code]; }).length; }
   /* 练过（靶场闭环完成）计数：只统计有效风险编号 */
   function rangedCount() {
@@ -193,8 +196,8 @@
     var activeCat = route.view === 'cat' ? route.param : (route.view === 'risk' && RISK_MAP[route.param] ? RISK_MAP[route.param].cat : '');
     var html = '<div class="nav-group"><div class="nav-title">攻击路径主线</div>' +
       navLink('#/home', 'i-home', '首页概览', route.view === 'home') +
-      navLink('#/lab', 'i-map', '攻击路径实验室', route.view === 'lab') +
-      navLink('#/lab?view=heat', 'i-chart', '风险热度矩阵', false) +
+      navLink('#/lab', 'i-map', '攻击路径实验室', route.view === 'lab' && route.query.view !== 'heat') +
+      navLink('#/lab?view=heat', 'i-chart', '风险热度矩阵', route.view === 'lab' && route.query.view === 'heat') +
       navLink('#/path', 'i-path', '新手学习路径', route.view === 'path',
         donePathSteps() + '/' + totalPathSteps()) +
       navLink('#/transformer', 'i-bolt', 'Transformer 攻防透视', route.view === 'transformer') +

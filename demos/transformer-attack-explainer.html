@@ -897,12 +897,20 @@ body.embedded .topbar { display: none; }
       if (!st || typeof st !== 'object') st = {};
       st.visited = st.visited || {};
       st.visited[S.scn] = Date.now();
-      if (correct === true) {
-        st.mini = st.mini || {}; st.mini[S.scn] = 1;
-        st.read = st.read || {}; if (!st.read[S.scn]) st.read[S.scn] = Date.now();
-        /* 答对维度记账（与主站 app.js 的 quiz.ok 同口径） */
-        st.quiz = st.quiz || {}; st.quiz.ok = st.quiz.ok || {};
-        st.quiz.ok[S.scn] = (st.quiz.ok[S.scn] || 0) + 1;
+      /* 与主站 app.js 测验中心同口径：每次作答累加 total，答对累加 right/ok */
+      if (correct === true || correct === false) {
+        st.quiz = st.quiz || {};
+        st.quiz.total = (st.quiz.total || 0) + 1;
+        if (correct === true) {
+          st.quiz.right = (st.quiz.right || 0) + 1;
+          st.mini = st.mini || {}; st.mini[S.scn] = 1;
+          st.read = st.read || {}; if (!st.read[S.scn]) st.read[S.scn] = Date.now();
+          st.quiz.ok = st.quiz.ok || {};
+          st.quiz.ok[S.scn] = (st.quiz.ok[S.scn] || 0) + 1;
+        } else {
+          st.quiz.wrong = st.quiz.wrong || {};
+          st.quiz.wrong[S.scn] = (st.quiz.wrong[S.scn] || 0) + 1;
+        }
       }
       localStorage.setItem('aisec-lab-v1', JSON.stringify(st));
     } catch (e) {}

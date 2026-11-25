@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" alt="AI Security Explainer：沿九阶段攻击路径学懂 AI 安全，覆盖 9 大知识域、152 条风险与 785 道题目" width="100%" />
+  <img src="./assets/readme/hero.svg" alt="AI Security Explainer：沿九阶段攻击路径学懂 AI 安全，覆盖 9 大知识域、152 条风险、785 道单选题、54 道实操题与 152 张 SM-2 知识卡片" width="100%" />
 </p>
 
 <p align="center">
@@ -33,10 +33,10 @@
 ## 学习闭环
 
 <p align="center">
-  <img src="./assets/readme/workflow.svg" alt="学习闭环：从 9 大知识域出发，经 7 种学习形式与 5 项配套功能，以 785 道题和本地进度衡量掌握程度，错题回流重新学习" width="100%" />
+  <img src="./assets/readme/workflow.svg" alt="学习闭环：从 9 大知识域出发，经 8 种学习形式与 6 项配套功能，以 785 道单选、54 道实操题和 SM-2 知识卡片衡量掌握程度，错题回流重新学习" width="100%" />
 </p>
 
-### 七种学习形式
+### 八种学习形式
 
 1. **知识学习卡片** — 掌握等级、来源依据、交叉引用快捷入口
 2. **30 秒读懂** — 一句话定义 + 风险说明 + 打个比方
@@ -110,6 +110,7 @@ tests/
   logic / interaction / persistence / ai-bank.test.mjs   三层 TDD + 题库 TDD
   cards.test.mjs                    卡片字段与完整 SM-2 算法 TDD
   practical.test.mjs                实操题完整性与判分器 TDD
+  glossary / demos / lab.test.mjs   术语 / 引擎 / 攻击路径状态机 TDD
 LICENSE                             知识共享署名-非商业性使用-相同方式共享 4.0
 ABOUT.md                            项目定位、作者与授权说明
 ```
@@ -136,11 +137,14 @@ node tests/logic.test.mjs          # 数据完整性与逻辑
 node tests/ai-bank.test.mjs        # 题库等价性、去重、九域一致性
 node tests/cards.test.mjs          # 卡片字段与完整 SM-2（1/6/interval×EF、EF≥1.3）
 node tests/practical.test.mjs      # 实操题完整性与判分器（部分得分、顺序、禁用项）
+node tests/glossary.test.mjs       # 术语匹配、优先级与转义
+node tests/demos.test.mjs          # 11 类引擎分派与纯 UI 函数
+node tests/lab.test.mjs            # 攻击路径状态机与阻断判定
 node scripts/e2e-ai-quiz.mjs       # 题库端到端（需 Chrome CDP 9223 + 站点 8899）
 node scripts/e2e-cards-practical.mjs  # 卡片 + 实操端到端
 ```
 
-> 已知范围外项：`logic.test.mjs` 中的 C3 / D3 / F5 为早期识别的待改进项，不影响核心学习功能。
+> 全量 9 个测试文件当前全部通过（含 CDP 端到端）；此前识别的 C3 / D3 / F5 等待改进项已修复。
 
 ---
 

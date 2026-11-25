@@ -485,6 +485,11 @@
     var r = $('[data-lab-range="stage"]', root);
     if (r) r.value = S.stage;
     if (!keepFilter) S.heatCell = null;
+    /* 手动越过被拦截阶段时给出明确提示（自动播放不打扰） */
+    var blocked = statusMap().firstBlocked;
+    if (!S.playing && blocked >= 0 && S.stage - 1 >= blocked) {
+      toast('链路已在 ' + STAGES[blocked].id + ' 被拦截：' + STAGES[blocked].name + ' 之后的阶段不可达。调低防御强度可重新打通。');
+    }
     renderChapter();
     updateAll(rebuild !== false);
   }
